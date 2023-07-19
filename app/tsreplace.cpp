@@ -1070,7 +1070,7 @@ int _tmain(const int argc, const TCHAR **argv) {
 #endif //#if defined(_WIN32) || defined(_WIN64)
 
     //log-levelの取得
-    RGYParamLogLevel loglevel(RGY_LOG_ERROR);
+    RGYParamLogLevel loglevel(RGY_LOG_INFO);
     for (int iarg = 1; iarg < argc - 1; iarg++) {
         if (tstring(argv[iarg]) == _T("--log-level")) {
             parse_log_level_param(argv[iarg], argv[iarg + 1], loglevel);
