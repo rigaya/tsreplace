@@ -158,22 +158,23 @@ protected:
 
     std::shared_ptr<RGYLog> m_log;
     std::unique_ptr<RGYTSDemuxer> m_demuxer;
-    std::chrono::system_clock::time_point m_tsReadUpdate;
-    int m_fileTSBufSize;
-    tstring m_fileTS;
-    tstring m_fileOut;
-    std::unique_ptr<RGYTSPacketSplitter> m_tsPktSplitter;
-    std::unique_ptr<FILE, fp_deleter> m_fpTSIn;
-    std::unique_ptr<FILE, fp_deleter> m_fpTSOut;
-    std::vector<uint8_t> m_bufferTS;
-    int64_t m_vidPTS;
-    int64_t m_vidDTS;
-    int64_t m_vidFirstPTS;
-    int64_t m_vidFirstDTS;
-    std::vector<uint8_t> m_lastPmt;
-    std::unique_ptr<TSReplaceVideo> m_video;
-    uint8_t m_pmtCounter;
-    uint8_t m_vidCounter;
+    std::chrono::system_clock::time_point m_tsReadUpdate; // 読み込みの進捗表示用
+    int m_fileTSBufSize; // 読み込みtsのファイルバッファサイズ
+    tstring m_fileTS;    // 入力tsファイル名
+    tstring m_fileOut;   // 出力tsファイル名
+    std::unique_ptr<RGYTSPacketSplitter> m_tsPktSplitter; // ts読み込み時ののpacket分割用
+    std::unique_ptr<FILE, fp_deleter> m_fpTSIn;  // 入力tsファイル
+    std::unique_ptr<FILE, fp_deleter> m_fpTSOut; // 出力tsファイル
+    std::vector<uint8_t> m_bufferTS; // 読み込みtsのファイルバッファ
+    uint16_t m_vidPIDReplace; // 出力tsの動画のPID上書き用
+    int64_t m_vidPTS;         // 直前の動画フレームのPTS
+    int64_t m_vidDTS;         // 直前の動画フレームのDTS
+    int64_t m_vidFirstPTS;    // 最初の動画フレームのPTS
+    int64_t m_vidFirstDTS;    // 最初の動画フレームのDTS
+    std::vector<uint8_t> m_lastPmt; // 直前の出力PMTデータ
+    std::unique_ptr<TSReplaceVideo> m_video; // 置き換え対象の動画の読み込み用
+    uint8_t m_pmtCounter; // 出力PMTのカウンタ
+    uint8_t m_vidCounter; // 出力映像のカウンタ
 };
 
 #endif //__TSREPLACE_H__

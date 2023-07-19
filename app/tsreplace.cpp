@@ -478,10 +478,11 @@ TSReplace::TSReplace() :
     m_fpTSIn(),
     m_fpTSOut(),
     m_bufferTS(),
-    m_vidPTS(AV_NOPTS_VALUE),
-    m_vidDTS(AV_NOPTS_VALUE),
-    m_vidFirstPTS(AV_NOPTS_VALUE),
-    m_vidFirstDTS(AV_NOPTS_VALUE),
+    m_vidPIDReplace(0x0100),
+    m_vidPTS(TIMESTAMP_INVALID_VALUE),
+    m_vidDTS(TIMESTAMP_INVALID_VALUE),
+    m_vidFirstPTS(TIMESTAMP_INVALID_VALUE),
+    m_vidFirstDTS(TIMESTAMP_INVALID_VALUE),
     m_lastPmt(),
     m_video(),
     m_pmtCounter(0),
@@ -552,6 +553,8 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     if (auto sts = m_video->initAVReader(prms.vidfile); sts != RGY_ERR_NONE) {
         return sts;
     }
+    m_vidPIDReplace = 0x0100;
+    AddMessage(RGY_LOG_INFO, _T("Output vid pid: 0x%04x.\n"), m_vidPIDReplace);
 
     return RGY_ERR_NONE;
 }
@@ -613,7 +616,9 @@ RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
         
         if (streamType == RGYTSStreamType::H262_VIDEO) {
             std::vector<uint8_t> vidtmp(table + pos, table + pos + 5 + esInfoLength);
-            vidtmp[0] = (uint8_t)m_video->getVideoStreamType();
+            vidtmp[0] = (uint8_t)m_video->getVideoStreamType();     // stream typeの上書き
+            vidtmp[1] = (uint8_t)((m_vidPIDReplace & 0x1fff) >> 8); // PIDの上書き
+            vidtmp[2] = (uint8_t) (m_vidPIDReplace & 0xff);         // PIDの上書き
 #if 0
             if (pos + 5 + esInfoLength <= tableLen) {
                 uint8_t componentTag = 0xff;
@@ -695,7 +700,7 @@ void TSReplace::pushPESPTS(std::vector<uint8_t>& buf, const int64_t pts, const u
 
 RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const uint8_t vidStreamID = 0xe0;
-    const auto vidPID = m_demuxer->service()->vid.pid;
+    const auto vidPID = m_vidPIDReplace;
     const bool addDts = (avpkt->pts != avpkt->dts);
     const auto pts = av_rescale_q(avpkt->pts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstPTS;
     const auto dts = av_rescale_q(avpkt->dts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstPTS;
