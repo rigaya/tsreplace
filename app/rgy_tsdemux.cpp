@@ -6,14 +6,15 @@ static const uint8_t TS_SYNC_BYTE = 0x47;
 
 template<int unit_size>
 int findsync_unit_size(const uint8_t *data, const int data_size) {
+    const auto checksize = std::min(data_size, unit_size * 32);
     const auto fin = std::min(data_size, unit_size);
     for (int pos = 0; pos < fin; pos++) {
         bool check = true;
         int i = pos;
-        for (; check && i < data_size; i += unit_size) {
+        for (; check && i < checksize; i += unit_size) {
             check = (data[i] == TS_SYNC_BYTE);
         }
-        if (i >= data_size) {
+        if (i >= checksize) {
             return pos;
         }
     }
