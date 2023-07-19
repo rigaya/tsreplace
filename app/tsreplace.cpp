@@ -908,7 +908,9 @@ RGY_ERR TSReplace::restruct() {
                 break;
             case RGYTSPacketType::PMT:
                 service = m_demuxer->service();
-                writeReplacedPMT(ret);
+                if (tspkt->header.PayloadStartFlag) {
+                    writeReplacedPMT(ret);
+                }
                 break;
             case RGYTSPacketType::PCR: {
                 const auto pcr = m_demuxer->pcr();
