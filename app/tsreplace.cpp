@@ -513,6 +513,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
             m_fpTSIn = std::unique_ptr<FILE, fp_deleter>(fptmp, fp_deleter());
             m_fileTSBufSize = 4 * 1024 * 1024;
         } else {
+            AddMessage(RGY_LOG_ERROR, _T("Failed to open input file \"%s\".\n"), m_fileTS.c_str());
             return RGY_ERR_FILE_OPEN;
         }
     } else {
@@ -532,6 +533,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         if (_tfopen_s(&fptmp, m_fileOut.c_str(), _T("wb")) == 0 && fptmp != nullptr) {
             m_fpTSOut = std::unique_ptr<FILE, fp_deleter>(fptmp, fp_deleter());
         } else {
+            AddMessage(RGY_LOG_ERROR, _T("Failed to open output file \"%s\".\n"), m_fileOut.c_str());
             return RGY_ERR_FILE_OPEN;
         }
     } else {
