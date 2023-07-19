@@ -131,12 +131,12 @@ int RGYTSDemuxer::parsePSI(RGYTS_PSI *psi, const uint8_t *payload, const int pay
 std::unique_ptr<RGYTS_PAT> RGYTSDemuxer::parsePAT(const uint8_t *payload, const int payloadSize, const int unitStart, const int counter) {
     for (int done = 0; !done; ) {
         done = parsePSI(&m_patPsi, payload, payloadSize, unitStart, counter);
-        AddMessage(RGY_LOG_DEBUG, _T("PAT section length %d\n"), m_patPsi.section_length);
 
         if (   m_patPsi.version_number
             && m_patPsi.current_next_indicator
             && m_patPsi.table_id == 0
             && m_patPsi.section_length >= 5) {
+            AddMessage(RGY_LOG_DEBUG, _T("PAT section length %d, version %d\n"), m_patPsi.section_length, m_patPsi.version_number);
             auto pat = std::make_unique<RGYTS_PAT>();
             pat->transport_stream_id = read16(m_patPsi.data + 3);
             pat->version_number = m_patPsi.version_number;
@@ -269,18 +269,25 @@ void RGYTSDemuxer::parsePMT(const RGYTS_PSI *psi) {
         m_service.aud1.packets.clear();
     }
 
-    AddMessage(RGY_LOG_DEBUG, _T("  program  0x%04x\n"), m_service.programNumber);
-    AddMessage(RGY_LOG_DEBUG, _T("  pid vid  0x%04x\n"), m_service.vid.pid);
-    AddMessage(RGY_LOG_DEBUG, _T("  pid aud0 0x%04x\n"), m_service.aud0.pid);
-    AddMessage(RGY_LOG_DEBUG, _T("  pid aud1 0x%04x\n"), m_service.aud1.pid);
-    AddMessage(RGY_LOG_DEBUG, _T("  pid cap  0x%04x\n"), m_service.cap.pid);
-    AddMessage(RGY_LOG_DEBUG, _T("  pid pcr  0x%04x\n"), m_service.pidPcr);
+    const auto loglevel = (m_service.versionNumber != psi->version_number) ? RGY_LOG_INFO : RGY_LOG_DEBUG;
+    if (m_service.versionNumber != psi->version_number) {
+        AddMessage(RGY_LOG_INFO, _T(" New PMT\n"));
+    }
+    m_service.versionNumber = psi->version_number;
+
+    AddMessage(loglevel, _T("  version    %4d\n"),  m_service.versionNumber);
+    AddMessage(loglevel, _T("  program  0x%04x\n"), m_service.programNumber);
+    AddMessage(loglevel, _T("  pid vid  0x%04x\n"), m_service.vid.pid);
+    AddMessage(loglevel, _T("  pid aud0 0x%04x\n"), m_service.aud0.pid);
+    AddMessage(loglevel, _T("  pid aud1 0x%04x\n"), m_service.aud1.pid);
+    AddMessage(loglevel, _T("  pid cap  0x%04x\n"), m_service.cap.pid);
+    AddMessage(loglevel, _T("  pid pcr  0x%04x\n"), m_service.pidPcr);
 }
 
 void RGYTSDemuxer::parsePMT(const uint8_t *payload, const int payloadSize, const int unitStart, const int counter) {
     for (int done = 0; !done; ) {
         done = parsePSI(&m_pmtPsi, payload, payloadSize, unitStart, counter);
-        AddMessage(RGY_LOG_DEBUG, _T("PMT section length %d\n"), m_pmtPsi.section_length);
+        AddMessage(RGY_LOG_DEBUG, _T("PMT section length %d, version_number %d\n"), m_pmtPsi.section_length, m_pmtPsi.version_number);
         if (m_pmtPsi.version_number && m_pmtPsi.table_id == 2 && m_pmtPsi.current_next_indicator) {
             parsePMT(&m_pmtPsi);
         }

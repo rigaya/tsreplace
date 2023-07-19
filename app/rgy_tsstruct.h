@@ -141,6 +141,7 @@ struct RGYTSStream {
 };
 
 struct RGYService {
+    int versionNumber;
     int programNumber;
     int pidPcr;
     RGYTSStream vid;
