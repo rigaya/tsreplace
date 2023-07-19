@@ -12,6 +12,9 @@
 #include "rgy_bitstream.h"
 #include "tsreplace.h"
 
+static const int64_t WRAP_AROUND_VALUE = (1LL << 33);
+static const int64_t WRAP_AROUND_CHECK_VALUE = ((1LL << 32) - 1);
+
 static_assert(TIMESTAMP_INVALID_VALUE == AV_NOPTS_VALUE);
 
 AVDemuxFormat::AVDemuxFormat() :
@@ -875,11 +878,25 @@ RGY_ERR TSReplace::restruct() {
                 service = m_demuxer->service();
                 writeReplacedPMT(ret);
                 break;
-            case RGYTSPacketType::PCR:
-                m_pcr = m_demuxer->pcr();
+            case RGYTSPacketType::PCR: {
+                const auto pcr = m_demuxer->pcr();
+                if (pcr != TIMESTAMP_INVALID_VALUE) {
+                    if (m_pcr == TIMESTAMP_INVALID_VALUE) {
+                        AddMessage(RGY_LOG_INFO, _T("First PCR:       %11lld\n"), pcr);
+                    } else if (pcr < m_pcr) {
+                        AddMessage(RGY_LOG_WARN, _T("PCR less than lastPCR: PCR %11lld, lastPCR %11lld\n"), pcr, m_pcr);
+                        if (m_pcr - pcr > WRAP_AROUND_CHECK_VALUE) {
+                            m_vidFirstPTS -= WRAP_AROUND_VALUE;
+                            m_vidFirstDTS -= WRAP_AROUND_VALUE;
+                            m_vidPTS -= WRAP_AROUND_VALUE;
+                            m_vidDTS -= WRAP_AROUND_VALUE;
+                        }
+                    }
+                }
+                m_pcr = pcr;
                 writeReplacedVideo();
                 writePacket(tspkt.get());
-                break;
+                break; }
             case RGYTSPacketType::VID:
                 if (tspkt->header.PayloadStartFlag) {
                     m_vidPTS = ret.pts;

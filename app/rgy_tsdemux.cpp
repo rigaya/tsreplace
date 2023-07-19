@@ -441,9 +441,14 @@ std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt
 
     result.type = RGYTSPacketType::OTHER;
     if (packetHeader.PID == m_service.pidPcr) {
-        m_pcr = parsePCR(packetHeader, pkt->data());
+        const auto pcr = parsePCR(packetHeader, pkt->data());
+        if (pcr != TIMESTAMP_INVALID_VALUE) {
+            m_pcr = pcr;
+        }
         result.type = RGYTSPacketType::PCR;
-        result.pts = m_pcr;
+        result.pts = pcr;
+        AddMessage((pcr != TIMESTAMP_INVALID_VALUE) ? RGY_LOG_TRACE : RGY_LOG_WARN,
+            _T("  pid pcr  0x%04x, %lld\n"), m_service.pidPcr, pcr);
     } else if (packetHeader.PID == m_service.vid.pid) {
         result.type = RGYTSPacketType::VID;
         if (packetHeader.PayloadStartFlag) {
