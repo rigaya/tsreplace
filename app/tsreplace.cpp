@@ -350,7 +350,7 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile) {
 
     const auto streamID = getVideoStreamType();
     if (streamID == RGYTSStreamType::UNKNOWN) {
-        AddMessage(RGY_LOG_DEBUG, _T("Unsupported codec %s.\n"), char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str());
+        AddMessage(RGY_LOG_ERROR, _T("Unsupported codec %s.\n"), char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str());
         return RGY_ERR_INVALID_CODEC;
     }
 
