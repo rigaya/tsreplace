@@ -563,7 +563,7 @@ std::tuple<RGY_ERR, std::vector<uniqueRGYTSPacket>> RGYTSPacketSplitter::split(v
     m_readBuf.addData(ptr, addSize);
 
     while (m_packetSize == 0 || m_readBuf.size() >= m_packetSize) {
-        auto offset = findsync(m_readBuf.data(), m_readBuf.size(), &m_packetSize);
+        auto offset = findsync(m_readBuf.data(), (int)m_readBuf.size(), &m_packetSize);
         if (offset < 0) return { RGY_ERR_NONE, std::move(packets) };
 
         auto pkt = m_packetContainer.getEmpty();
