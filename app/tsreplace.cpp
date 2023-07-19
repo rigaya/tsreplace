@@ -810,7 +810,7 @@ RGY_ERR TSReplace::restruct() {
             if (!pat) {
                 continue;
             }
-            AddMessage(RGY_LOG_DEBUG, _T("Found first PAT.\n"));
+            AddMessage(RGY_LOG_INFO, _T("Found first PAT.\n"));
         }
 
         // PMTを探す
@@ -886,9 +886,11 @@ RGY_ERR TSReplace::restruct() {
                     m_vidDTS = ret.dts;
                     if (m_vidFirstPTS == TIMESTAMP_INVALID_VALUE) {
                         m_vidFirstPTS = m_vidPTS;
+                        AddMessage(RGY_LOG_INFO, _T("First Video PTS: %11lld\n"), m_vidFirstPTS);
                     }
                     if (m_vidFirstDTS == TIMESTAMP_INVALID_VALUE) {
                         m_vidFirstDTS = m_vidDTS;
+                        AddMessage(RGY_LOG_DEBUG, _T("First Video DTS: %11lld\n"), m_vidFirstDTS);
                     }
                 }
                 break;
