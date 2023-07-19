@@ -49,8 +49,8 @@ struct AVDemuxVideo {
 };
 
 struct AVDemuxer {
-    AVDemuxFormat            format;
-    AVDemuxVideo             video;
+    AVDemuxFormat format;
+    AVDemuxVideo  video;
 
     AVDemuxer() : format(), video() {};
 };
@@ -109,8 +109,10 @@ protected:
 
 struct TSRReplaceParams {
     tstring input;
-    tstring vidfile;
+    tstring replacefile;
     tstring output;
+
+    TSRReplaceParams();
 };
 
 class TSReplace {

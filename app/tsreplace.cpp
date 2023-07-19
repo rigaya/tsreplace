@@ -67,6 +67,12 @@ void AVDemuxVideo::close() {
     }
 }
 
+TSRReplaceParams::TSRReplaceParams() :
+    input(),
+    replacefile(),
+    output() {
+}
+
 TSReplaceVideo::TSReplaceVideo(std::shared_ptr<RGYLog> log) :
     m_filename(),
     m_Demux(),
@@ -505,9 +511,9 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_fileTS = prms.input;
     m_fileOut = prms.output;
 
-    AddMessage(RGY_LOG_INFO, _T("Output file \"%s\".\n"), prms.output.c_str());
-    AddMessage(RGY_LOG_INFO, _T("Input  file \"%s\".\n"), prms.input.c_str());
-    AddMessage(RGY_LOG_INFO, _T("Video  file \"%s\".\n"), prms.vidfile.c_str());
+    AddMessage(RGY_LOG_INFO, _T("Output  file \"%s\".\n"), prms.output.c_str());
+    AddMessage(RGY_LOG_INFO, _T("Input   file \"%s\".\n"), prms.input.c_str());
+    AddMessage(RGY_LOG_INFO, _T("Replace file \"%s\".\n"), prms.replacefile.c_str());
 
     if (_tcscmp(m_fileTS.c_str(), _T("-")) != 0) {
         AddMessage(RGY_LOG_DEBUG, _T("Open input file \"%s\".\n"), m_fileTS.c_str());
@@ -559,7 +565,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_demuxer->init(log);
 
     m_video = std::make_unique<TSReplaceVideo>(log);
-    if (auto sts = m_video->initAVReader(prms.vidfile); sts != RGY_ERR_NONE) {
+    if (auto sts = m_video->initAVReader(prms.replacefile); sts != RGY_ERR_NONE) {
         return sts;
     }
     m_vidPIDReplace = 0x0100;
@@ -933,7 +939,21 @@ static void show_version() {
 }
 
 static void show_help() {
-    _ftprintf(stdout, _T("tsreplace -i <入力tsファイル> --video-replace <置き換え映像ファイル> -o <出力tsファイル>\n"));
+    tstring str = _T("tsreplace -i <input ts file> -r <replace video file> -o <output ts file>\n");
+
+    str +=
+        _T("\n")
+        _T("-h,-? --help                    show help\n")
+        _T("-v,--version                    show version info\n")
+        _T("\n")
+        _T("-i,--input <filename>           set input ts filename\n")
+        _T("-r,--replace <filename>         set input video filename\n")
+        _T("-o,--output <filename>          set output ts filename\n")
+        _T("\n")
+        _T("   --log-level <string>         set log level\n")
+        _T("                                  debug, info(default), warn, error\n");
+     
+    _ftprintf(stdout, _T("%s\n"), str.c_str());
 }
 
 int parse_log_level_param(const TCHAR *option_name, const TCHAR *arg_value, RGYParamLogLevel& loglevel) {
@@ -1002,6 +1022,9 @@ const TCHAR *cmd_short_opt_to_long(TCHAR short_opt) {
     case _T('o'):
         option_name = _T("output");
         break;
+    case _T('r'):
+        option_name = _T("replace");
+        break;
     case _T('v'):
         option_name = _T("version");
         break;
@@ -1021,9 +1044,9 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
         prm.input = strInput[i];
         return 0;
     }
-    if (IS_OPTION("video-replace")) {
+    if (IS_OPTION("replace")) {
         i++;
-        prm.vidfile = strInput[i];
+        prm.replacefile = strInput[i];
         return 0;
     }
     if (IS_OPTION("output")) {
@@ -1143,7 +1166,7 @@ int _tmain(const int argc, const TCHAR **argv) {
         _ftprintf(stderr, _T("ERROR: input file not set.\n"));
         return 1;
     }
-    if (prm.vidfile.size() == 0) {
+    if (prm.replacefile.size() == 0) {
         _ftprintf(stderr, _T("ERROR: video file not set.\n"));
         return 1;
     }

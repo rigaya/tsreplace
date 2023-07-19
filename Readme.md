@@ -12,7 +12,7 @@ Windows 10/11 (x86/x64)
 
 ## 使用方法
 ```
-tsreplace -i <入力tsファイル> --video-replace <置き換え映像ファイル> -o <出力tsファイル>
+tsreplace -i <入力tsファイル> -r <置き換え映像ファイル> -o <出力tsファイル>
 ```
 
 ## ソースコードについて
@@ -21,7 +21,7 @@ tsreplace -i <入力tsファイル> --video-replace <置き換え映像ファイ
   [ffmpeg](https://ffmpeg.org/)
   を使用しています。
 - 本ソフトウェア作成に当たり、
-  [tsreadex](https://github.com/xtne6f/tsreadex)を参考にさせていただきました。
+  [tsreadex](https://github.com/xtne6f/tsreadex)を参考にさせていただきました。  
   どうもありがとうございました。
 
 
