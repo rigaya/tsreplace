@@ -242,9 +242,13 @@ std::vector<int> TSReplaceVideo::getAVReaderStreamIndex(AVMediaType type) {
 
 RGYTSStreamType TSReplaceVideo::getVideoStreamType() const {
     if (m_Demux.video.stream) {
-        const auto codec = m_Demux.video.stream->codecpar->codec_id;
-        if (codec == AV_CODEC_ID_H264) {
+        switch (m_Demux.video.stream->codecpar->codec_id) {
+        case AV_CODEC_ID_H264:
             return RGYTSStreamType::H264_VIDEO;
+        case AV_CODEC_ID_HEVC:
+            return RGYTSStreamType::H265_VIDEO;
+        default:
+            return RGYTSStreamType::UNKNOWN;
         }
     }
     return RGYTSStreamType::UNKNOWN;
