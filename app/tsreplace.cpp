@@ -1176,8 +1176,10 @@ int _tmain(const int argc, const TCHAR **argv) {
     }
 
     auto log = std::make_shared<RGYLog>(nullptr, loglevel);
-
     TSReplace restruct;
-    restruct.init(log, prm);
-    return restruct.restruct();
+    auto err = restruct.init(log, prm);
+    if (err != RGY_ERR_NONE) return 1;
+
+    err = restruct.restruct();
+    return (err == RGY_ERR_MORE_DATA || err == RGY_ERR_NONE) ? 0 : 1;
 }
