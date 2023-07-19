@@ -309,7 +309,7 @@ int64_t RGYTSDemuxer::parsePCR(const RGYTSPacketHeader& packetHeader, const uint
                 ((int64_t)(packet[10] & 0x01) << 8)
                 | (int64_t)packet[11];
             pcr = PCR_base + PCR_ext / 300;
-            AddMessage(RGY_LOG_TRACE, _T("PCR  %lld\n"), m_pcr);
+            AddMessage(RGY_LOG_TRACE, _T("PCR  %lld\n"), pcr);
         }
     }
     return pcr;
