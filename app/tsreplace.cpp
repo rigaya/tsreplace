@@ -754,7 +754,7 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
 }
 
 RGY_ERR TSReplace::writeReplacedVideo() {
-    if (m_vidFirstPTS == AV_NOPTS_VALUE) {
+    if (m_vidFirstPTS == TIMESTAMP_INVALID_VALUE) {
         return RGY_ERR_NONE;
     }
     const auto ptsOrigOffset = m_vidPTS - m_vidFirstPTS;
@@ -784,7 +784,7 @@ RGY_ERR TSReplace::restruct() {
     std::vector<uniqueRGYTSPacket> tsPackets;
     const RGYTS_PAT *pat = nullptr;
     const RGYService *service = nullptr;
-    int64_t m_pcr = AV_NOPTS_VALUE;
+    int64_t m_pcr = TIMESTAMP_INVALID_VALUE;
     while (!pat || !service) {
         if (tsPackets.empty() || !pat || !service) {
             auto err = readTS(tsPackets);
@@ -884,10 +884,10 @@ RGY_ERR TSReplace::restruct() {
                 if (tspkt->header.PayloadStartFlag) {
                     m_vidPTS = ret.pts;
                     m_vidDTS = ret.dts;
-                    if (m_vidFirstPTS == AV_NOPTS_VALUE) {
+                    if (m_vidFirstPTS == TIMESTAMP_INVALID_VALUE) {
                         m_vidFirstPTS = m_vidPTS;
                     }
-                    if (m_vidFirstDTS == AV_NOPTS_VALUE) {
+                    if (m_vidFirstDTS == TIMESTAMP_INVALID_VALUE) {
                         m_vidFirstDTS = m_vidDTS;
                     }
                 }
