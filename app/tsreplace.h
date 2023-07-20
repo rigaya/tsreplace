@@ -97,6 +97,7 @@ public:
     std::tuple<RGY_ERR, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> getFrontPktAndPop();
 
 protected:
+    RGY_ERR GetHeader();
     void hevcMp42Annexb(AVPacket *pkt);
     RGY_ERR initVideoBsfs();
 

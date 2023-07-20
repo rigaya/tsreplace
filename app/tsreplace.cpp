@@ -398,6 +398,86 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile) {
         }
     }
 
+    //ヘッダーの取得を確認する
+    RGY_ERR sts = GetHeader();
+    if (sts != RGY_ERR_NONE) {
+        AddMessage(RGY_LOG_ERROR, _T("failed to get header: extradata size = %d.\n"), m_Demux.video.stream->codecpar->extradata_size);
+        return sts;
+    }
+
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR TSReplaceVideo::GetHeader() {
+
+    if (m_Demux.video.extradata == nullptr) {
+        if (m_Demux.video.stream->codecpar->extradata == nullptr || m_Demux.video.stream->codecpar->extradata_size == 0) {
+            return RGY_ERR_NONE;
+        }
+        m_Demux.video.extradataSize = m_Demux.video.stream->codecpar->extradata_size;
+        //ここでav_mallocを使用しないと正常に動作しない
+        m_Demux.video.extradata = (uint8_t *)av_malloc(m_Demux.video.stream->codecpar->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+        //ヘッダのデータをコピーしておく
+        memcpy(m_Demux.video.extradata, m_Demux.video.stream->codecpar->extradata, m_Demux.video.extradataSize);
+        memset(m_Demux.video.extradata + m_Demux.video.extradataSize, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+        if (m_log != nullptr && RGY_LOG_DEBUG >= m_log->getLogLevel(RGY_LOGT_IN)) {
+            tstring header_str;
+            for (int i = 0; i < m_Demux.video.extradataSize; i++) {
+                header_str += strsprintf(_T("%02x "), m_Demux.video.extradata[i]);
+            }
+            AddMessage(RGY_LOG_DEBUG, _T("GetHeader extradata(%d): %s\n"), m_Demux.video.extradataSize, header_str.c_str());
+        }
+
+        if (m_Demux.video.bUseHEVCmp42AnnexB) {
+            hevcMp42Annexb(nullptr);
+        } else if (m_Demux.video.bsfcCtx && m_Demux.video.extradata[0] == 1) {
+            if (m_Demux.video.extradataSize < m_Demux.video.bsfcCtx->par_out->extradata_size) {
+                m_Demux.video.extradata = (uint8_t *)av_realloc(m_Demux.video.extradata, m_Demux.video.bsfcCtx->par_out->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+            }
+            memcpy(m_Demux.video.extradata, m_Demux.video.bsfcCtx->par_out->extradata, m_Demux.video.bsfcCtx->par_out->extradata_size);
+            AddMessage(RGY_LOG_DEBUG, _T("GetHeader: changed %d bytes -> %d bytes by %s.\n"),
+                m_Demux.video.extradataSize, m_Demux.video.bsfcCtx->par_out->extradata_size,
+                char_to_tstring(m_Demux.video.bsfcCtx->filter->name).c_str());
+            m_Demux.video.extradataSize = m_Demux.video.bsfcCtx->par_out->extradata_size;
+            memset(m_Demux.video.extradata + m_Demux.video.extradataSize, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+        } else if (m_Demux.video.stream->codecpar->codec_id == AV_CODEC_ID_VC1) {
+            //int lengthFix = (0 == strcmp(m_Demux.format.formatCtx->iformat->name, "mpegts")) ? 0 : -1;
+            //vc1FixHeader(lengthFix);
+        }
+        AddMessage(RGY_LOG_DEBUG, _T("GetHeader: %d bytes.\n"), m_Demux.video.extradataSize);
+        if (m_Demux.video.extradataSize == 0 && m_Demux.video.extradata != nullptr) {
+            av_free(m_Demux.video.extradata);
+            m_Demux.video.extradata = nullptr;
+            AddMessage(RGY_LOG_DEBUG, _T("Failed to get header: 0 byte."));
+            return RGY_ERR_MORE_DATA;
+        }
+    }
+    if (m_Demux.video.stream->codecpar->codec_id == AV_CODEC_ID_AV1
+        && m_Demux.video.extradataSize > 0
+        && m_Demux.video.firstPkt) {
+        const int max_check_len = std::min(8, m_Demux.video.extradataSize - 8);
+        if (m_Demux.video.firstPkt->size > m_Demux.video.extradataSize - max_check_len) {
+            //mp4に入っているAV1等の場合、先頭に余計なbyteがあることがあるので、最初のパケットと照らし合わせて不要なら取り除く
+            for (int i = 1; i <= max_check_len; i++) {
+                if (m_Demux.video.extradataSize - i < m_Demux.video.firstPkt->size) {
+                    if (memcmp(m_Demux.video.extradata + i, m_Demux.video.firstPkt->data, m_Demux.video.extradataSize - i) == 0) {
+                        const int remove_bytes = i;
+                        AddMessage(RGY_LOG_DEBUG, _T("GetHeader remove bytes: %d (size: %d -> %d)\n"), remove_bytes, m_Demux.video.extradataSize, m_Demux.video.extradataSize - remove_bytes);
+                        m_Demux.video.extradataSize -= remove_bytes;
+                        memmove(m_Demux.video.extradata, m_Demux.video.extradata + remove_bytes, m_Demux.video.extradataSize);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (m_Demux.video.extradataSize && m_log != nullptr && RGY_LOG_DEBUG >= m_log->getLogLevel(RGY_LOGT_IN)) {
+        tstring header_str;
+        for (int i = 0; i < m_Demux.video.extradataSize; i++) {
+            header_str += strsprintf(_T("%02x "), m_Demux.video.extradata[i]);
+        }
+        AddMessage(RGY_LOG_DEBUG, _T("GetHeader(%d): %s\n"), m_Demux.video.extradataSize, header_str.c_str());
+    }
     return RGY_ERR_NONE;
 }
 
