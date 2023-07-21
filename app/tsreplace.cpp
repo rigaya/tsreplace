@@ -1202,9 +1202,6 @@ int _tmain(const int argc, const TCHAR **argv) {
                     _ftprintf(stderr, _T("Unknown option: \"%s\""), argv[i]);
                     return 1;
                 }
-            } else {
-                _ftprintf(stderr, _T("Invalid option: \"%s\""), argv[i]);
-                return 1;
             }
         }
 
@@ -1251,9 +1248,6 @@ int _tmain(const int argc, const TCHAR **argv) {
                     _ftprintf(stderr, _T("Unknown option: \"%s\""), strInput[i]);
                     return 1;
                 }
-            } else {
-                _ftprintf(stderr, _T("Invalid option: \"%s\""), strInput[i]);
-                return 1;
             }
         }
 
