@@ -1,0 +1,107 @@
+name: Build Windows Releases
+
+on:
+  push:
+    branches:
+      - master
+      - actions
+    tags:
+      - '*'
+
+jobs:
+  get_version_name:
+    name: Get version name
+    runs-on: ubuntu-latest
+    outputs:
+      rev_count: ${{ steps.rev.outputs.rev_count }}
+      version_name: ${{ steps.rev.outputs.version_name }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+    - name: Set version name
+      id: rev
+      run: |
+        cd ${{ github.workspace }}
+        REVCOUNT=`git rev-list --count HEAD`
+        echo "rev_count=${REVCOUNT}" >> $GITHUB_OUTPUT
+        if [[ "${{ github.ref }}" =~ "refs/tags/" ]]; then
+          VERSION=$(echo ${{ github.ref }} | sed -e "s#refs/tags/##g")
+        else
+          VERSION=r${REVCOUNT}
+        fi
+        echo "version_name=${VERSION}" >> $GITHUB_OUTPUT
+
+  build:
+    name: Upload Release Asset
+    runs-on: windows-2022
+    needs: get_version_name
+
+    defaults:
+      run:
+        shell: cmd
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86
+            platform: Win32
+          - arch: x64
+            platform: x64
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Checkout dependencies
+        run: |
+          curl -s -o ffmpeg_lgpl.zip -L https://github.com/rigaya/ffmpeg5_dlls_for_hwenc/archive/refs/tags/20230204.zip
+          7z x -y ffmpeg_lgpl.zip
+          move ffmpeg5* ffmpeg_lgpl
+
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v1.1
+        with:
+          msbuild-architecture: ${{ matrix.arch }}
+
+      - name: MSBuild
+        run: |
+          msbuild tsreplace.sln /t:build /p:configuration=Release /p:Platform=${{ matrix.arch }} -maxcpucount
+
+      - name: Create Archieve
+        id: archieve
+        run: |
+          mkdir tsreplace_Release
+          copy _build\${{ matrix.platform }}\Release\tsreplace*.exe tsreplace_Release
+          copy _build\${{ matrix.platform }}\Release\*.dll tsreplace_Release
+          7z a -mx9 tsreplace_${{ needs.get_version_name.outputs.version_name }}_${{ matrix.platform }}.7z .\tsreplace_Release\*
+
+      - name: Check dll
+        run: |
+          "tsreplace_Release\tsreplace.exe" --check-avcodec-dll
+
+      - name: Check Version
+        if: startsWith(github.ref, 'refs/tags/')
+        id: check_ver
+        run: |
+          powershell "$ver = (Get-ItemProperty .\tsreplace_Release\tsreplace*.exe).VersionInfo.FileVersion; if ($ver -eq '${{ needs.get_version_name.outputs.version_name }}') { exit 0; } exit 1;"
+
+      - name: Upload Release Asset
+        id: upload-release-asset 
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: tsreplace_${{ needs.get_version_name.outputs.version_name }}_${{ matrix.platform }}.7z
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: tsreplace_release_${{ needs.get_version_name.outputs.version_name }}_${{ matrix.platform }}
+          path: tsreplace_${{ needs.get_version_name.outputs.version_name }}_${{ matrix.platform }}.7z
