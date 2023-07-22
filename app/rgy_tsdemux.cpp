@@ -521,14 +521,14 @@ RGY_ERR RGYTSPacketSplitter::init(std::shared_ptr<RGYLog> log) {
 void RGYTSPacketSplitter::parsePacketHeaderAdaption(RGYTSPacketHeader& pktHeader, const uint8_t *ptr) {
     if (pktHeader.adaptionLength > 0) {
         uint8_t d5 = ptr[5];
-        pktHeader.adapt.discontinuity          = d5 & 0x01;
-        pktHeader.adapt.random_access          = d5 & 0x02;
-        pktHeader.adapt.es_priority            = d5 & 0x04;
-        pktHeader.adapt.pcr_flag               = d5 & 0x08;
-        pktHeader.adapt.opcr_flag              = d5 & 0x10;
-        pktHeader.adapt.splicing_point         = d5 & 0x20;
-        pktHeader.adapt.transport_private_data = d5 & 0x40;
-        pktHeader.adapt.adaption_filed_ext     = d5 & 0x80;
+        pktHeader.adapt.discontinuity          = d5 & 0x80;
+        pktHeader.adapt.random_access          = d5 & 0x40;
+        pktHeader.adapt.es_priority            = d5 & 0x20;
+        pktHeader.adapt.pcr_flag               = d5 & 0x10;
+        pktHeader.adapt.opcr_flag              = d5 & 0x08;
+        pktHeader.adapt.splicing_point         = d5 & 0x04;
+        pktHeader.adapt.transport_private_data = d5 & 0x02;
+        pktHeader.adapt.adaption_filed_ext     = d5 & 0x01;
         pktHeader.adapt.splicing_countdown     = 0;
 
         int ipos = 6;
