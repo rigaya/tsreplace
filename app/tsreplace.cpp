@@ -1118,6 +1118,22 @@ int parse_print_options(const TCHAR *option_name) {
         show_version();
         return 1;
     }
+    if (IS_OPTION("check-avcodec-dll")) {
+        const auto ret = check_avcodec_dll();
+        _ftprintf(stdout, _T("%s\n"), ret ? _T("yes") : _T("no"));
+        if (!ret) {
+            _ftprintf(stdout, _T("%s\n"), error_mes_avcodec_dll_not_found().c_str());
+        }
+        return ret ? 1 : -1;
+    }
+    if (IS_OPTION("check-avversion")) {
+        _ftprintf(stdout, _T("%s\n"), getAVVersions().c_str());
+        return 1;
+    }
+    if (IS_OPTION("check-formats")) {
+        _ftprintf(stdout, _T("%s\n"), getAVFormats((RGYAVFormatType)(RGY_AVFORMAT_DEMUX | RGY_AVFORMAT_MUX)).c_str());
+        return 1;
+    }
     return 0;
 }
 
