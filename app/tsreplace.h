@@ -158,6 +158,7 @@ protected:
     RGY_ERR writeReplacedPMT(const RGYTSDemuxResult& result);
     RGY_ERR writeReplacedVideo();
     RGY_ERR writeReplacedVideo(AVPacket *pkt);
+    int64_t getOrigPtsOffset();
     void pushPESPTS(std::vector<uint8_t>& buf, const int64_t pts, const uint8_t top4bit);
 
     void AddMessage(RGYLogLevel log_level, const tstring &str) {
@@ -205,6 +206,8 @@ protected:
     std::unique_ptr<TSReplaceVideo> m_video; // 置き換え対象の動画の読み込み用
     uint8_t m_pmtCounter; // 出力PMTのカウンタ
     uint8_t m_vidCounter; // 出力映像のカウンタ
+    int64_t m_ptswrapOffset; // PCR wrapの回数
+    int m_ptsOffsetNegativeCount; // pts offset計算時に負となった回数
 };
 
 #endif //__TSREPLACE_H__

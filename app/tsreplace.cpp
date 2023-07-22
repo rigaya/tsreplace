@@ -605,7 +605,9 @@ TSReplace::TSReplace() :
     m_lastPmt(),
     m_video(),
     m_pmtCounter(0),
-    m_vidCounter(0) {
+    m_vidCounter(0),
+    m_ptswrapOffset(0),
+    m_ptsOffsetNegativeCount(0) {
 
 }
 TSReplace::~TSReplace() {
@@ -868,11 +870,27 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     return RGY_ERR_NONE;
 }
 
+int64_t TSReplace::getOrigPtsOffset() {
+    auto offset = m_vidPTS + m_ptswrapOffset - m_vidFirstPTS;
+    if (offset < 0 && m_vidPTS < WRAP_AROUND_CHECK_VALUE) {
+        AddMessage(RGY_LOG_DEBUG, _T("negative PTS Offset %lld: PTS %11lld [+ %lld], firstPTS %11lld\n"), offset, m_vidPTS, m_ptswrapOffset, m_vidFirstPTS);
+        m_ptsOffsetNegativeCount++;
+        if (m_ptsOffsetNegativeCount >= 32) {
+            m_ptswrapOffset += WRAP_AROUND_VALUE;
+            m_ptsOffsetNegativeCount = 0;
+            AddMessage(RGY_LOG_DEBUG, _T("PTS wrap!\n"));
+        }
+        return offset + WRAP_AROUND_VALUE;
+    } else {
+        return offset;
+    }
+}
+
 RGY_ERR TSReplace::writeReplacedVideo() {
     if (m_vidFirstPTS == TIMESTAMP_INVALID_VALUE) {
         return RGY_ERR_NONE;
     }
-    const auto ptsOrigOffset = m_vidPTS - m_vidFirstPTS;
+    const auto ptsOrigOffset = getOrigPtsOffset();
     for (;;) {
         auto [err, pts, dts] = m_video->getFrontPktPtsDts();
         if (err != RGY_ERR_NONE) {
@@ -900,6 +918,7 @@ RGY_ERR TSReplace::restruct() {
     const RGYTS_PAT *pat = nullptr;
     const RGYService *service = nullptr;
     int64_t m_pcr = TIMESTAMP_INVALID_VALUE;
+    uint8_t ts_wrap_check = 0x00;
     while (!pat || !service) {
         if (tsPackets.empty() || !pat || !service) {
             auto err = readTS(tsPackets);
@@ -999,12 +1018,6 @@ RGY_ERR TSReplace::restruct() {
                         AddMessage(RGY_LOG_INFO, _T("First PCR:       %11lld\n"), pcr);
                     } else if (pcr < m_pcr) {
                         AddMessage(RGY_LOG_WARN, _T("PCR less than lastPCR: PCR %11lld, lastPCR %11lld\n"), pcr, m_pcr);
-                        if (m_pcr - pcr > WRAP_AROUND_CHECK_VALUE) {
-                            m_vidFirstPTS -= WRAP_AROUND_VALUE;
-                            m_vidFirstDTS -= WRAP_AROUND_VALUE;
-                            m_vidPTS -= WRAP_AROUND_VALUE;
-                            m_vidDTS -= WRAP_AROUND_VALUE;
-                        }
                     }
                 }
                 m_pcr = pcr;
