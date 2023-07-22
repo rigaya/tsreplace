@@ -202,6 +202,7 @@ protected:
     int64_t m_vidDTS;         // 直前の動画フレームのDTS
     int64_t m_vidFirstPTS;    // 最初の動画フレームのPTS
     int64_t m_vidFirstDTS;    // 最初の動画フレームのDTS
+    int64_t m_vidFirstKeyPTS;    // 最初の動画キーフレームのPTS
     std::vector<uint8_t> m_lastPmt; // 直前の出力PMTデータ
     std::unique_ptr<TSReplaceVideo> m_video; // 置き換え対象の動画の読み込み用
     uint8_t m_pmtCounter; // 出力PMTのカウンタ

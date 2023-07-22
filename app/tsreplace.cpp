@@ -602,6 +602,7 @@ TSReplace::TSReplace() :
     m_vidDTS(TIMESTAMP_INVALID_VALUE),
     m_vidFirstPTS(TIMESTAMP_INVALID_VALUE),
     m_vidFirstDTS(TIMESTAMP_INVALID_VALUE),
+    m_vidFirstKeyPTS(TIMESTAMP_INVALID_VALUE),
     m_lastPmt(),
     m_video(),
     m_pmtCounter(0),
@@ -1015,7 +1016,7 @@ RGY_ERR TSReplace::restruct() {
                 const auto pcr = m_demuxer->pcr();
                 if (pcr != TIMESTAMP_INVALID_VALUE) {
                     if (m_pcr == TIMESTAMP_INVALID_VALUE) {
-                        AddMessage(RGY_LOG_INFO, _T("First PCR:       %11lld\n"), pcr);
+                        AddMessage(RGY_LOG_INFO, _T("First PCR:           %11lld\n"), pcr);
                     } else if (pcr < m_pcr) {
                         AddMessage(RGY_LOG_WARN, _T("PCR less than lastPCR: PCR %11lld, lastPCR %11lld\n"), pcr, m_pcr);
                     }
@@ -1030,11 +1031,17 @@ RGY_ERR TSReplace::restruct() {
                     m_vidDTS = ret.dts;
                     if (m_vidFirstPTS == TIMESTAMP_INVALID_VALUE) {
                         m_vidFirstPTS = m_vidPTS;
-                        AddMessage(RGY_LOG_INFO, _T("First Video PTS: %11lld\n"), m_vidFirstPTS);
+                        AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstPTS);
+                    }
+                    if (tspkt->header.adapt.random_access && m_vidFirstKeyPTS == TIMESTAMP_INVALID_VALUE) {
+                        m_vidFirstKeyPTS = m_vidPTS;
+                        const auto offset = (int)(m_vidFirstKeyPTS - m_vidFirstPTS);
+                        AddMessage(RGY_LOG_INFO, _T("First Video KEY PTS: %11lld, Offset %d [%d ms]\n"),
+                            m_vidFirstKeyPTS, offset, (int)(offset * 1000.0 / (double)TS_TIMEBASE + 0.5));
                     }
                     if (m_vidFirstDTS == TIMESTAMP_INVALID_VALUE) {
                         m_vidFirstDTS = m_vidDTS;
-                        AddMessage(RGY_LOG_DEBUG, _T("First Video DTS: %11lld\n"), m_vidFirstDTS);
+                        AddMessage(RGY_LOG_DEBUG, _T("First Video DTS:     %11lld\n"), m_vidFirstDTS);
                     }
                 }
                 break;
