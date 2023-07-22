@@ -479,7 +479,8 @@ std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt
         result.type = RGYTSPacketType::VID;
         if (packetHeader.PayloadStartFlag) {
             auto pes = parsePESHeader(pkt->packet);
-            AddMessage(RGY_LOG_TRACE, _T("  pid vid  0x%04x, %4d, %lld, %lld\n"), m_service.vid.pid, packetHeader.payloadSize, pes.pts, pes.dts);
+            AddMessage(RGY_LOG_TRACE, _T("  pid vid  0x%04x, %s, %4d, %lld, %lld\n"),
+                m_service.vid.pid, packetHeader.adapt.random_access ? _T("K") : _T("_"), packetHeader.payloadSize, pes.pts, pes.dts);
             result.pts = pes.pts;
             result.dts = pes.dts;
         }
