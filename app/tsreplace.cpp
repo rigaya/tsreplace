@@ -96,7 +96,8 @@ void AVDemuxVideo::close() {
 TSRReplaceParams::TSRReplaceParams() :
     input(),
     replacefile(),
-    output() {
+    output(),
+    startpoint(TSRReplaceStartPoint::KeyframPts) {
 }
 
 TSReplaceVideo::TSReplaceVideo(std::shared_ptr<RGYLog> log) :
@@ -601,9 +602,11 @@ TSReplace::TSReplace() :
     m_vidPTSOutMax(TIMESTAMP_INVALID_VALUE),
     m_vidPTS(TIMESTAMP_INVALID_VALUE),
     m_vidDTS(TIMESTAMP_INVALID_VALUE),
-    m_vidFirstPTS(TIMESTAMP_INVALID_VALUE),
-    m_vidFirstDTS(TIMESTAMP_INVALID_VALUE),
+    m_vidFirstFramePTS(TIMESTAMP_INVALID_VALUE),
+    m_vidFirstFrameDTS(TIMESTAMP_INVALID_VALUE),
     m_vidFirstKeyPTS(TIMESTAMP_INVALID_VALUE),
+    m_startPoint(TSRReplaceStartPoint::KeyframPts),
+    m_vidFirstTimestamp(TIMESTAMP_INVALID_VALUE),
     m_lastPmt(),
     m_video(),
     m_pmtCounter(0),
@@ -619,10 +622,12 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_log = log;
     m_fileTS = prms.input;
     m_fileOut = prms.output;
+    m_startPoint = prms.startpoint;
 
-    AddMessage(RGY_LOG_INFO, _T("Output  file \"%s\".\n"), prms.output.c_str());
-    AddMessage(RGY_LOG_INFO, _T("Input   file \"%s\".\n"), prms.input.c_str());
-    AddMessage(RGY_LOG_INFO, _T("Replace file \"%s\".\n"), prms.replacefile.c_str());
+    AddMessage(RGY_LOG_INFO, _T("Output  file: \"%s\".\n"), prms.output.c_str());
+    AddMessage(RGY_LOG_INFO, _T("Input   file: \"%s\".\n"), prms.input.c_str());
+    AddMessage(RGY_LOG_INFO, _T("Replace file: \"%s\".\n"), prms.replacefile.c_str());
+    AddMessage(RGY_LOG_INFO, _T("Start point : %s.\n"), get_cx_desc(list_startpoint, (int)prms.startpoint));
 
     if (_tcscmp(m_fileTS.c_str(), _T("-")) != 0) {
         AddMessage(RGY_LOG_DEBUG, _T("Open input file \"%s\".\n"), m_fileTS.c_str());
@@ -826,8 +831,8 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const uint8_t vidStreamID = 0xe0;
     const auto vidPID = m_vidPIDReplace;
     const bool addDts = (avpkt->pts != avpkt->dts);
-    const auto pts = av_rescale_q(avpkt->pts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstPTS;
-    const auto dts = av_rescale_q(avpkt->dts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstPTS;
+    const auto pts = av_rescale_q(avpkt->pts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
+    const auto dts = av_rescale_q(avpkt->dts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
     RGYTSPacket pkt;
     pkt.packet.reserve(188);
     for (int i = 0; i < avpkt->size; ) {
@@ -883,12 +888,12 @@ int64_t TSReplace::getOrigPtsOffset() {
             m_vidPTSOutMax = m_vidPTS;
         }
     }
-    auto offset = m_vidPTSOutMax + m_ptswrapOffset - m_vidFirstPTS;
+    auto offset = m_vidPTSOutMax + m_ptswrapOffset - m_vidFirstTimestamp;
     return offset;
 }
 
 RGY_ERR TSReplace::writeReplacedVideo() {
-    if (m_vidFirstPTS == TIMESTAMP_INVALID_VALUE) {
+    if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
         return RGY_ERR_NONE;
     }
     const auto ptsOrigOffset = getOrigPtsOffset();
@@ -1029,20 +1034,28 @@ RGY_ERR TSReplace::restruct() {
                 if (tspkt->header.PayloadStartFlag) {
                     m_vidPTS = ret.pts;
                     m_vidDTS = ret.dts;
-                    if (m_vidFirstPTS == TIMESTAMP_INVALID_VALUE) {
-                        m_vidFirstPTS = m_vidPTS;
+                    if (m_vidFirstFramePTS == TIMESTAMP_INVALID_VALUE) {
+                        m_vidFirstFramePTS = m_vidPTS;
+                        if (m_startPoint == TSRReplaceStartPoint::FirstPts) {
+                            m_vidFirstTimestamp = m_vidPTS;
+                            m_vidPTSOutMax = m_vidPTS;
+                        }
                         m_vidPTSOutMax = m_vidPTS;
-                        AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstPTS);
+                        AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstFramePTS);
                     }
                     if (tspkt->header.adapt.random_access && m_vidFirstKeyPTS == TIMESTAMP_INVALID_VALUE) {
                         m_vidFirstKeyPTS = m_vidPTS;
-                        const auto offset = (int)(m_vidFirstKeyPTS - m_vidFirstPTS);
+                        if (m_startPoint == TSRReplaceStartPoint::KeyframPts) {
+                            m_vidFirstTimestamp = m_vidPTS;
+                            m_vidPTSOutMax = m_vidPTS;
+                        }
+                        const auto offset = (int)(m_vidFirstKeyPTS - m_vidFirstFramePTS);
                         AddMessage(RGY_LOG_INFO, _T("First Video KEY PTS: %11lld, Offset %d [%d ms]\n"),
                             m_vidFirstKeyPTS, offset, (int)(offset * 1000.0 / (double)TS_TIMEBASE + 0.5));
                     }
-                    if (m_vidFirstDTS == TIMESTAMP_INVALID_VALUE) {
-                        m_vidFirstDTS = m_vidDTS;
-                        AddMessage(RGY_LOG_DEBUG, _T("First Video DTS:     %11lld\n"), m_vidFirstDTS);
+                    if (m_vidFirstFrameDTS == TIMESTAMP_INVALID_VALUE) {
+                        m_vidFirstFrameDTS = m_vidDTS;
+                        AddMessage(RGY_LOG_DEBUG, _T("First Video DTS:     %11lld\n"), m_vidFirstFrameDTS);
                     }
                 }
                 break;
@@ -1078,6 +1091,9 @@ static void show_help() {
         _T("-i,--input <filename>           set input ts filename\n")
         _T("-r,--replace <filename>         set input video filename\n")
         _T("-o,--output <filename>          set output ts filename\n")
+        _T("\n")
+        _T("  --start-point <string>        set start point\n")
+        _T("                                  keyframe, firstframe\n");
         _T("\n")
         _T("   --log-level <string>         set log level\n")
         _T("                                  debug, info(default), warn, error\n");
@@ -1197,6 +1213,16 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
     if (IS_OPTION("output")) {
         i++;
         prm.output = strInput[i];
+        return 0;
+    }
+    if (IS_OPTION("start-point")) {
+        i++;
+        if (int value = get_value_from_chr(list_startpoint, strInput[i]); value != PARSE_ERROR_FLAG) {
+            prm.startpoint = (TSRReplaceStartPoint)value;
+        } else {
+            _ftprintf(stderr, _T("Unknown value for --%s: \"%s\""), option_name, strInput[i]);
+            return 1;
+        }
         return 0;
     }
     if (IS_OPTION("log-level")) { // 最初に読み取り済み

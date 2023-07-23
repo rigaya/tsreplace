@@ -135,10 +135,23 @@ protected:
     std::deque<std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> m_packets;
 };
 
+
+enum class TSRReplaceStartPoint {
+    KeyframPts,
+    FirstPts,
+};
+
+static const CX_DESC list_startpoint[] = {
+    { _T("keyframe"),   (int)TSRReplaceStartPoint::KeyframPts },
+    { _T("firstframe"), (int)TSRReplaceStartPoint::FirstPts },
+    { nullptr, 0 }
+};
+
 struct TSRReplaceParams {
     tstring input;
     tstring replacefile;
     tstring output;
+    TSRReplaceStartPoint startpoint;
 
     TSRReplaceParams();
 };
@@ -197,13 +210,15 @@ protected:
     std::unique_ptr<FILE, fp_deleter> m_fpTSIn;  // 入力tsファイル
     std::unique_ptr<FILE, fp_deleter> m_fpTSOut; // 出力tsファイル
     std::vector<uint8_t> m_bufferTS; // 読み込みtsのファイルバッファ
-    uint16_t m_vidPIDReplace; // 出力tsの動画のPID上書き用
-    int64_t m_vidPTSOutMax;   // 動画フレームのPTS最大値(出力制御用)
-    int64_t m_vidPTS;         // 直前の動画フレームのPTS
-    int64_t m_vidDTS;         // 直前の動画フレームのDTS
-    int64_t m_vidFirstPTS;    // 最初の動画フレームのPTS
-    int64_t m_vidFirstDTS;    // 最初の動画フレームのDTS
-    int64_t m_vidFirstKeyPTS;    // 最初の動画キーフレームのPTS
+    uint16_t m_vidPIDReplace;   // 出力tsの動画のPID上書き用
+    int64_t m_vidPTSOutMax;     // 動画フレームのPTS最大値(出力制御用)
+    int64_t m_vidPTS;           // 直前の動画フレームのPTS
+    int64_t m_vidDTS;           // 直前の動画フレームのDTS
+    int64_t m_vidFirstFramePTS; // 最初の動画フレームのPTS
+    int64_t m_vidFirstFrameDTS; // 最初の動画フレームのDTS
+    int64_t m_vidFirstKeyPTS;   // 最初の動画キーフレームのPTS
+    TSRReplaceStartPoint m_startPoint; // 起点モード
+    int64_t m_vidFirstTimestamp;       // 起点のtimestamp
     std::vector<uint8_t> m_lastPmt; // 直前の出力PMTデータ
     std::unique_ptr<TSReplaceVideo> m_video; // 置き換え対象の動画の読み込み用
     uint8_t m_pmtCounter; // 出力PMTのカウンタ
