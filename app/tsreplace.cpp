@@ -598,6 +598,7 @@ TSReplace::TSReplace() :
     m_fpTSOut(),
     m_bufferTS(),
     m_vidPIDReplace(0x0100),
+    m_vidPTSOutMax(TIMESTAMP_INVALID_VALUE),
     m_vidPTS(TIMESTAMP_INVALID_VALUE),
     m_vidDTS(TIMESTAMP_INVALID_VALUE),
     m_vidFirstPTS(TIMESTAMP_INVALID_VALUE),
@@ -607,8 +608,7 @@ TSReplace::TSReplace() :
     m_video(),
     m_pmtCounter(0),
     m_vidCounter(0),
-    m_ptswrapOffset(0),
-    m_ptsOffsetNegativeCount(0) {
+    m_ptswrapOffset(0) {
 
 }
 TSReplace::~TSReplace() {
@@ -872,19 +872,19 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
 }
 
 int64_t TSReplace::getOrigPtsOffset() {
-    auto offset = m_vidPTS + m_ptswrapOffset - m_vidFirstPTS;
-    if (offset < 0 && m_vidPTS < WRAP_AROUND_CHECK_VALUE) {
-        AddMessage(RGY_LOG_DEBUG, _T("negative PTS Offset %lld: PTS %11lld [+ %lld], firstPTS %11lld\n"), offset, m_vidPTS, m_ptswrapOffset, m_vidFirstPTS);
-        m_ptsOffsetNegativeCount++;
-        if (m_ptsOffsetNegativeCount >= 32) {
+    if (m_vidPTS < m_vidPTSOutMax) {
+        if (m_vidPTSOutMax - m_vidPTS > WRAP_AROUND_CHECK_VALUE) {
+            AddMessage(RGY_LOG_INFO, _T("PTS wrap!\n"));
             m_ptswrapOffset += WRAP_AROUND_VALUE;
-            m_ptsOffsetNegativeCount = 0;
-            AddMessage(RGY_LOG_DEBUG, _T("PTS wrap!\n"));
+            m_vidPTSOutMax = m_vidPTS;
         }
-        return offset + WRAP_AROUND_VALUE;
     } else {
-        return offset;
+        if (m_vidPTS - m_vidPTSOutMax < WRAP_AROUND_CHECK_VALUE) {
+            m_vidPTSOutMax = m_vidPTS;
+        }
     }
+    auto offset = m_vidPTSOutMax + m_ptswrapOffset - m_vidFirstPTS;
+    return offset;
 }
 
 RGY_ERR TSReplace::writeReplacedVideo() {
@@ -1031,6 +1031,7 @@ RGY_ERR TSReplace::restruct() {
                     m_vidDTS = ret.dts;
                     if (m_vidFirstPTS == TIMESTAMP_INVALID_VALUE) {
                         m_vidFirstPTS = m_vidPTS;
+                        m_vidPTSOutMax = m_vidPTS;
                         AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstPTS);
                     }
                     if (tspkt->header.adapt.random_access && m_vidFirstKeyPTS == TIMESTAMP_INVALID_VALUE) {

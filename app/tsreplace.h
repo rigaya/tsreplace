@@ -198,6 +198,7 @@ protected:
     std::unique_ptr<FILE, fp_deleter> m_fpTSOut; // 出力tsファイル
     std::vector<uint8_t> m_bufferTS; // 読み込みtsのファイルバッファ
     uint16_t m_vidPIDReplace; // 出力tsの動画のPID上書き用
+    int64_t m_vidPTSOutMax;   // 動画フレームのPTS最大値(出力制御用)
     int64_t m_vidPTS;         // 直前の動画フレームのPTS
     int64_t m_vidDTS;         // 直前の動画フレームのDTS
     int64_t m_vidFirstPTS;    // 最初の動画フレームのPTS
@@ -207,8 +208,7 @@ protected:
     std::unique_ptr<TSReplaceVideo> m_video; // 置き換え対象の動画の読み込み用
     uint8_t m_pmtCounter; // 出力PMTのカウンタ
     uint8_t m_vidCounter; // 出力映像のカウンタ
-    int64_t m_ptswrapOffset; // PCR wrapの回数
-    int m_ptsOffsetNegativeCount; // pts offset計算時に負となった回数
+    int64_t m_ptswrapOffset; // PCR wrapの加算分
 };
 
 #endif //__TSREPLACE_H__
