@@ -66,6 +66,9 @@ struct AVDemuxVideo {
     uint8_t                  *extradata;             //動画のヘッダ情報
     int                       extradataSize;         //動画のヘッダサイズ
 
+    const AVCodec            *codecDecode;                                        //動画のデコーダ (使用しない場合はnullptr)
+    std::unique_ptr<AVCodecContext, RGYAVDeleter<AVCodecContext>> codecCtxDecode; //動画のデコーダ (使用しない場合はnullptr)
+
     RGYHEVCBsf                hevcbsf;               //HEVCのbsfの選択
     bool                      bUseHEVCmp42AnnexB;
     int                       hevcNaluLengthSize;
@@ -79,7 +82,9 @@ struct AVDemuxer {
     AVDemuxFormat format;
     AVDemuxVideo  video;
 
-    AVDemuxer() : format(), video() {};
+    AVDemuxer();
+    ~AVDemuxer();
+    void close();
 };
 
 class TSReplaceVideo {
@@ -91,12 +96,16 @@ public:
     std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> getSample();
     RGYTSStreamType getVideoStreamType() const;
 
+    AVCodecID getVidCodecID() const;
     AVRational getVidTimebase() const;
     int64_t getFirstKeyPts() const;
     std::tuple<RGY_ERR, int64_t, int64_t> getFrontPktPtsDts();
     std::tuple<RGY_ERR, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> getFrontPktAndPop();
 
+    RGY_ERR initDecoder();
+    RGY_ERR getFirstDecodedPts(int64_t& firstPts);
 protected:
+    void SetExtraData(AVCodecParameters *codecParam, const uint8_t *data, uint32_t size);
     RGY_ERR GetHeader();
     void hevcMp42Annexb(AVPacket *pkt);
     RGY_ERR initVideoBsfs();
@@ -139,11 +148,13 @@ protected:
 enum class TSRReplaceStartPoint {
     KeyframPts,
     FirstPts,
+    LibavDecodePts,
 };
 
 static const CX_DESC list_startpoint[] = {
     { _T("keyframe"),   (int)TSRReplaceStartPoint::KeyframPts },
     { _T("firstframe"), (int)TSRReplaceStartPoint::FirstPts },
+    { _T("libav"),      (int)TSRReplaceStartPoint::LibavDecodePts },
     { nullptr, 0 }
 };
 
@@ -219,6 +230,7 @@ protected:
     int64_t m_vidFirstKeyPTS;   // 最初の動画キーフレームのPTS
     TSRReplaceStartPoint m_startPoint; // 起点モード
     int64_t m_vidFirstTimestamp;       // 起点のtimestamp
+    int64_t m_vidFirstLibavDecPTS;     // libavでデコードした時の最初のPTS
     std::vector<uint8_t> m_lastPmt; // 直前の出力PMTデータ
     std::unique_ptr<TSReplaceVideo> m_video; // 置き換え対象の動画の読み込み用
     uint8_t m_pmtCounter; // 出力PMTのカウンタ

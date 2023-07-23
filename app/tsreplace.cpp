@@ -57,8 +57,10 @@ AVDemuxFormat::~AVDemuxFormat() {
 }
 
 void AVDemuxFormat::close() {
+    formatCtx.reset();
     if (formatOptions) {
         av_dict_free(&formatOptions);
+        formatOptions = nullptr;
     }
 }
 
@@ -74,6 +76,7 @@ AVDemuxVideo::AVDemuxVideo() :
     bsfcCtx(std::unique_ptr<AVBSFContext, RGYAVDeleter<AVBSFContext>>(nullptr, RGYAVDeleter<AVBSFContext>(av_bsf_free))),
     extradata(nullptr),
     extradataSize(0),
+    codecCtxDecode(std::unique_ptr<AVCodecContext, RGYAVDeleter<AVCodecContext>>(nullptr, RGYAVDeleter<AVCodecContext>(avcodec_free_context))),
     hevcbsf(RGYHEVCBsf::INTERNAL),
     bUseHEVCmp42AnnexB(false),
     hevcNaluLengthSize(0) {
@@ -85,12 +88,26 @@ AVDemuxVideo::~AVDemuxVideo() {
 }
 
 void AVDemuxVideo::close() {
+    codecCtxDecode.reset();
+    bsfcCtx.reset();
     if (firstPkt) {
         av_packet_unref(firstPkt);
+        firstPkt = nullptr;
     }
     if (extradata) {
         av_free(extradata);
+        extradata = nullptr;
     }
+}
+
+AVDemuxer::AVDemuxer() : format(), video() {};
+
+AVDemuxer::~AVDemuxer() {
+    close();
+}
+void AVDemuxer::close() {
+    video.close();
+    format.close();
 }
 
 TSRReplaceParams::TSRReplaceParams() :
@@ -276,6 +293,13 @@ std::vector<int> TSReplaceVideo::getAVReaderStreamIndex(AVMediaType type) {
     return streams;
 }
 
+AVCodecID TSReplaceVideo::getVidCodecID() const {
+    if (m_Demux.video.stream) {
+        return m_Demux.video.stream->codecpar->codec_id;
+    }
+    return AV_CODEC_ID_NONE;
+}
+
 RGYTSStreamType TSReplaceVideo::getVideoStreamType() const {
     if (m_Demux.video.stream) {
         switch (m_Demux.video.stream->codecpar->codec_id) {
@@ -376,19 +400,13 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile) {
 
     m_Demux.video.index = videoStreams.front();
     m_Demux.video.stream = m_Demux.format.formatCtx->streams[m_Demux.video.index];
-    AddMessage(RGY_LOG_INFO, _T("Replace to video stream #%d, %s, %dx%d (%s), stream time_base %d/%d, codec_timebase %d/%d.\n"),
+    AddMessage(RGY_LOG_INFO, _T("Opened video stream #%d, %s, %dx%d (%s), stream time_base %d/%d, codec_timebase %d/%d.\n"),
         m_Demux.video.stream->index,
         char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str(),
         m_Demux.video.stream->codecpar->width, m_Demux.video.stream->codecpar->height,
         char_to_tstring(av_pix_fmt_desc_get((AVPixelFormat)m_Demux.video.stream->codecpar->format)->name).c_str(),
         m_Demux.video.stream->time_base.num, m_Demux.video.stream->time_base.den,
         av_stream_get_codec_timebase(m_Demux.video.stream).num, av_stream_get_codec_timebase(m_Demux.video.stream).den);
-
-    const auto streamID = getVideoStreamType();
-    if (streamID == RGYTSStreamType::UNKNOWN) {
-        AddMessage(RGY_LOG_ERROR, _T("Unsupported codec %s.\n"), char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str());
-        return RGY_ERR_INVALID_CODEC;
-    }
 
     //必要ならbitstream filterを初期化
     if (m_Demux.video.stream->codecpar->extradata && m_Demux.video.stream->codecpar->extradata[0] == 1) {
@@ -478,6 +496,99 @@ RGY_ERR TSReplaceVideo::GetHeader() {
             header_str += strsprintf(_T("%02x "), m_Demux.video.extradata[i]);
         }
         AddMessage(RGY_LOG_DEBUG, _T("GetHeader(%d): %s\n"), m_Demux.video.extradataSize, header_str.c_str());
+    }
+    return RGY_ERR_NONE;
+}
+
+void TSReplaceVideo::SetExtraData(AVCodecParameters *codecParam, const uint8_t *data, uint32_t size) {
+    if (data == nullptr || size == 0)
+        return;
+    if (codecParam->extradata)
+        av_free(codecParam->extradata);
+    codecParam->extradata_size = size;
+    codecParam->extradata = (uint8_t *)av_malloc(codecParam->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+    memcpy(codecParam->extradata, data, size);
+    memset(codecParam->extradata + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+};
+
+RGY_ERR TSReplaceVideo::initDecoder() {
+    //codec側に格納されている値は、streamからは取得できない
+    m_Demux.video.codecDecode = avcodec_find_decoder(m_Demux.video.stream->codecpar->codec_id);
+    if (m_Demux.video.codecDecode == nullptr) {
+        AddMessage(RGY_LOG_ERROR, errorMesForCodec(_T("Failed to find decoder"), m_Demux.video.stream->codecpar->codec_id).c_str());
+        return RGY_ERR_NOT_FOUND;
+    }
+    AddMessage(RGY_LOG_DEBUG, _T("found decoder for %s.\n"), char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str());
+
+    m_Demux.video.codecCtxDecode = std::unique_ptr<AVCodecContext, RGYAVDeleter<AVCodecContext>>(avcodec_alloc_context3(m_Demux.video.codecDecode), RGYAVDeleter<AVCodecContext>(avcodec_free_context));
+    if (!m_Demux.video.codecCtxDecode) {
+        AddMessage(RGY_LOG_ERROR, errorMesForCodec(_T("Failed to allocate decoder"), m_Demux.video.stream->codecpar->codec_id).c_str());
+        return RGY_ERR_NULL_PTR;
+    }
+    AddMessage(RGY_LOG_DEBUG, _T("allocated decoder.\n"));
+
+    unique_ptr_custom<AVCodecParameters> codecParamCopy(avcodec_parameters_alloc(), [](AVCodecParameters *pCodecPar) {
+        avcodec_parameters_free(&pCodecPar);
+        });
+    auto ret = avcodec_parameters_copy(codecParamCopy.get(), m_Demux.video.stream->codecpar);
+    if (ret < 0) {
+        AddMessage(RGY_LOG_ERROR, _T("failed to copy codec param to context for parser: %s.\n"), qsv_av_err2str(ret).c_str());
+        return RGY_ERR_UNKNOWN;
+    }
+    if (m_Demux.video.bsfcCtx || m_Demux.video.bUseHEVCmp42AnnexB) {
+        SetExtraData(codecParamCopy.get(), m_Demux.video.extradata, m_Demux.video.extradataSize);
+    }
+    if (0 > (ret = avcodec_parameters_to_context(m_Demux.video.codecCtxDecode.get(), codecParamCopy.get()))) {
+        AddMessage(RGY_LOG_ERROR, _T("failed to set codec param to context for decoder: %s.\n"), qsv_av_err2str(ret).c_str());
+        return RGY_ERR_UNKNOWN;
+    }
+
+    m_Demux.video.codecCtxDecode->time_base = av_stream_get_codec_timebase(m_Demux.video.stream);
+    m_Demux.video.codecCtxDecode->pkt_timebase = m_Demux.video.stream->time_base;
+    if (0 > (ret = avcodec_open2(m_Demux.video.codecCtxDecode.get(), m_Demux.video.codecDecode, nullptr))) {
+        AddMessage(RGY_LOG_ERROR, _T("Failed to open decoder for %s: %s\n"), char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str(), qsv_av_err2str(ret).c_str());
+        return RGY_ERR_UNSUPPORTED;
+    }
+    AddMessage(RGY_LOG_DEBUG, _T("opened decoder.\n"));
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR TSReplaceVideo::getFirstDecodedPts(int64_t& firstPts) {
+    std::unique_ptr<AVFrame, RGYAVDeleter<AVFrame>> frame(av_frame_alloc(), RGYAVDeleter<AVFrame>(av_frame_free));
+    int got_frame = 0;
+    while (!got_frame) {
+        auto [ret, pkt] = getSample();
+        if (ret == 0) {
+            ; // 処理を継続
+        } else if (ret != AVERROR_EOF) {
+            return RGY_ERR_UNKNOWN;
+        }
+        ret = avcodec_send_packet(m_Demux.video.codecCtxDecode.get(), pkt.get());
+        //AVERROR(EAGAIN) -> パケットを送る前に受け取る必要がある
+        //パケットが受け取られていないのでpopしない
+        if (ret != AVERROR(EAGAIN)) {
+            pkt.reset();
+        }
+        if (ret == AVERROR_EOF) { //これ以上パケットを送れない
+            AddMessage(RGY_LOG_DEBUG, _T("failed to send packet to video decoder, already flushed: %s.\n"), qsv_av_err2str(ret).c_str());
+        } else if (ret < 0 && ret != AVERROR(EAGAIN)) {
+            AddMessage(RGY_LOG_ERROR, _T("failed to send packet to video decoder: %s.\n"), qsv_av_err2str(ret).c_str());
+            return RGY_ERR_UNDEFINED_BEHAVIOR;
+        }
+        ret = avcodec_receive_frame(m_Demux.video.codecCtxDecode.get(), frame.get());
+        if (ret == AVERROR(EAGAIN)) { //もっとパケットを送る必要がある
+            continue;
+        }
+        if (ret == AVERROR_EOF) {
+            //最後まで読み込んだ
+            return RGY_ERR_MORE_DATA;
+        }
+        if (ret < 0) {
+            AddMessage(RGY_LOG_ERROR, _T("failed to receive frame from video decoder: %s.\n"), qsv_av_err2str(ret).c_str());
+            return RGY_ERR_UNDEFINED_BEHAVIOR;
+        }
+        got_frame = TRUE;
+        firstPts = frame->pts;
     }
     return RGY_ERR_NONE;
 }
@@ -607,6 +718,7 @@ TSReplace::TSReplace() :
     m_vidFirstKeyPTS(TIMESTAMP_INVALID_VALUE),
     m_startPoint(TSRReplaceStartPoint::KeyframPts),
     m_vidFirstTimestamp(TIMESTAMP_INVALID_VALUE),
+    m_vidFirstLibavDecPTS(TIMESTAMP_INVALID_VALUE),
     m_lastPmt(),
     m_video(),
     m_pmtCounter(0),
@@ -682,6 +794,30 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     if (auto sts = m_video->initAVReader(prms.replacefile); sts != RGY_ERR_NONE) {
         return sts;
     }
+
+    const auto streamID = m_video->getVideoStreamType();
+    if (streamID == RGYTSStreamType::UNKNOWN) {
+        AddMessage(RGY_LOG_ERROR, _T("Unsupported codec %s.\n"), char_to_tstring(avcodec_get_name(m_video->getVidCodecID())).c_str());
+        return RGY_ERR_INVALID_CODEC;
+    }
+
+    if (m_startPoint == TSRReplaceStartPoint::LibavDecodePts) {
+        auto inputts = std::make_unique<TSReplaceVideo>(log);
+        auto sts = inputts->initAVReader(m_fileTS);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        sts = inputts->initDecoder();
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        sts = inputts->getFirstDecodedPts(m_vidFirstLibavDecPTS);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        AddMessage(RGY_LOG_INFO, _T("First Libav dec PTS: %11lld\n"), m_vidFirstLibavDecPTS);
+    }
+
     m_vidPIDReplace = 0x0100;
     AddMessage(RGY_LOG_INFO, _T("Output vid pid: 0x%04x.\n"), m_vidPIDReplace);
 
@@ -1039,6 +1175,9 @@ RGY_ERR TSReplace::restruct() {
                         if (m_startPoint == TSRReplaceStartPoint::FirstPts) {
                             m_vidFirstTimestamp = m_vidPTS;
                             m_vidPTSOutMax = m_vidPTS;
+                        } else if (m_startPoint == TSRReplaceStartPoint::LibavDecodePts) {
+                            m_vidFirstTimestamp = m_vidFirstLibavDecPTS;
+                            m_vidPTSOutMax = m_vidFirstLibavDecPTS;
                         }
                         m_vidPTSOutMax = m_vidPTS;
                         AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstFramePTS);
@@ -1093,7 +1232,7 @@ static void show_help() {
         _T("-o,--output <filename>          set output ts filename\n")
         _T("\n")
         _T("  --start-point <string>        set start point\n")
-        _T("                                  keyframe, firstframe\n");
+        _T("                                  keyframe, firstframe, libav\n");
         _T("\n")
         _T("   --log-level <string>         set log level\n")
         _T("                                  debug, info(default), warn, error\n");
