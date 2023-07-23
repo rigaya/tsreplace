@@ -314,7 +314,7 @@ RGYTSStreamType TSReplaceVideo::getVideoStreamType() const {
     return RGYTSStreamType::UNKNOWN;
 }
 
-RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile) {
+RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, const bool getPktBeforeKey) {
     if (!check_avcodec_dll()) {
         AddMessage(RGY_LOG_ERROR, error_mes_avcodec_dll_not_found());
         return RGY_ERR_NULL_PTR;
@@ -398,6 +398,7 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile) {
         return RGY_ERR_INVALID_DATA_TYPE;
     }
 
+    m_Demux.video.getPktBeforeKey = getPktBeforeKey;
     m_Demux.video.index = videoStreams.front();
     m_Demux.video.stream = m_Demux.format.formatCtx->streams[m_Demux.video.index];
     AddMessage(RGY_LOG_INFO, _T("Opened video stream #%d, %s, %dx%d (%s), stream time_base %d/%d, codec_timebase %d/%d.\n"),
@@ -554,16 +555,21 @@ RGY_ERR TSReplaceVideo::initDecoder() {
 }
 
 RGY_ERR TSReplaceVideo::getFirstDecodedPts(int64_t& firstPts) {
+    auto pkt = m_poolPkt->getFree();
+    pkt.reset();
+
     std::unique_ptr<AVFrame, RGYAVDeleter<AVFrame>> frame(av_frame_alloc(), RGYAVDeleter<AVFrame>(av_frame_free));
     int got_frame = 0;
     while (!got_frame) {
-        auto [ret, pkt] = getSample();
-        if (ret == 0) {
-            ; // 処理を継続
-        } else if (ret != AVERROR_EOF) {
-            return RGY_ERR_UNKNOWN;
+        if (!pkt) {
+            auto [ret, avpkt] = getSample();
+            if (ret == 0) {
+                pkt = std::move(avpkt);
+            } else if (ret != AVERROR_EOF) {
+                return RGY_ERR_UNKNOWN;
+            }
         }
-        ret = avcodec_send_packet(m_Demux.video.codecCtxDecode.get(), pkt.get());
+        int ret = avcodec_send_packet(m_Demux.video.codecCtxDecode.get(), pkt.get());
         //AVERROR(EAGAIN) -> パケットを送る前に受け取る必要がある
         //パケットが受け取られていないのでpopしない
         if (ret != AVERROR(EAGAIN)) {
@@ -629,9 +635,13 @@ std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> TSReplaceVide
             }
             const bool keyframe = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
             if (!m_Demux.video.gotFirstKeyframe && !keyframe) {
-                av_packet_unref(pkt.get());
                 i_samples++;
-                continue;
+                if (m_Demux.video.getPktBeforeKey) {
+                    return { 0, std::move(pkt) };
+                } else {
+                    av_packet_unref(pkt.get());
+                    continue;
+                }
             } else if (!m_Demux.video.gotFirstKeyframe) {
                 if (pkt->flags & AV_PKT_FLAG_DISCARD) {
                     //timestampが正常に設定されておらず、移乗動作の原因となるので、
@@ -791,7 +801,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_demuxer->init(log);
 
     m_video = std::make_unique<TSReplaceVideo>(log);
-    if (auto sts = m_video->initAVReader(prms.replacefile); sts != RGY_ERR_NONE) {
+    if (auto sts = m_video->initAVReader(prms.replacefile, false); sts != RGY_ERR_NONE) {
         return sts;
     }
 
@@ -803,7 +813,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
 
     if (m_startPoint == TSRReplaceStartPoint::LibavDecodePts) {
         auto inputts = std::make_unique<TSReplaceVideo>(log);
-        auto sts = inputts->initAVReader(m_fileTS);
+        auto sts = inputts->initAVReader(m_fileTS, true);
         if (sts != RGY_ERR_NONE) {
             return sts;
         }

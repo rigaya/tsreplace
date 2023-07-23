@@ -60,6 +60,7 @@ struct AVDemuxVideo {
     int64_t                   streamFirstKeyPts;     //動画ファイルの最初のpts
     AVPacket                 *firstPkt;              //動画の最初のpacket
     uint32_t                  streamPtsInvalid;      //動画ファイルのptsが無効 (H.264/ES, 等)
+    bool                      getPktBeforeKey;       //動画の先頭がキーフレームでなくても全サンプルを取得する
     bool                      gotFirstKeyframe;      //動画の最初のキーフレームを取得済み
     int                       keyFrameOffset;
     std::unique_ptr<AVBSFContext, RGYAVDeleter<AVBSFContext>> bsfcCtx;
@@ -92,7 +93,7 @@ public:
     TSReplaceVideo(std::shared_ptr<RGYLog> log);
     virtual ~TSReplaceVideo();
     std::vector<int> getAVReaderStreamIndex(AVMediaType type);
-    RGY_ERR initAVReader(const tstring& videofile);
+    RGY_ERR initAVReader(const tstring& videofile, const bool getPktBeforeKey);
     std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> getSample();
     RGYTSStreamType getVideoStreamType() const;
 
