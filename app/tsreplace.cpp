@@ -912,37 +912,14 @@ RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
         const int esInfoLength = ((table[pos + 3] & 0x03) << 8) | table[pos + 4];
         
         if (streamType == RGYTSStreamType::H262_VIDEO) {
-            std::vector<uint8_t> vidtmp(table + pos, table + pos + 5 + esInfoLength);
-            vidtmp[0] = (uint8_t)m_video->getVideoStreamType();     // stream typeの上書き
-            vidtmp[1] = (uint8_t)((m_vidPIDReplace & 0x1fff) >> 8); // PIDの上書き
-            vidtmp[2] = (uint8_t) (m_vidPIDReplace & 0xff);         // PIDの上書き
-#if 0
-            if (pos + 5 + esInfoLength <= tableLen) {
-                uint8_t componentTag = 0xff;
-                uint8_t videoDecCtrlFlags = 0x00;
-                int descLen = 0;
-                for (int i = 5; i + 2 < 5 + esInfoLength; ) {
-                    const RGYTSDescriptor tag = (RGYTSDescriptor)vidtmp[i];
-                    const int descLen = vidtmp[i + 1];
-                    // stream_identifier_descriptor
-                    switch (tag) {
-                    case RGYTSDescriptor::StreamIdentifier:
-                        componentTag = vidtmp[i + 2];
-                        break;
-                    case RGYTSDescriptor::VideoDecodeControl:
-                        videoDecCtrlFlags = vidtmp[i + 2];
-                        break;
-                    }
-                    i += 2 + descLen;
-                }
-                if ((m_videoPid == 0 && componentTag == 0xff) || componentTag == 0x00 || componentTag == 0x81) {
-                    const uint8_t video_decode_format = (videoDecCtrlFlags & 0x3C) >> 4;
-                    const uint8_t transfer_characteristics = (videoDecCtrlFlags & 0xC0) >> 6;
-                    videoDecCtrlFlags = (videoDecCtrlFlags & 0x03) | (video_decode_format << 2) | (transfer_characteristics << 6);
-                }
-            }
-#endif
-            buf.insert(buf.end(), vidtmp.begin(), vidtmp.end());
+            buf.push_back((uint8_t)m_video->getVideoStreamType());     // stream typeの上書き
+            buf.push_back((uint8_t)((m_vidPIDReplace & 0x1fff) >> 8) | ((table[pos + 1] & 0xE0) >> 8)); // PIDの上書き
+            buf.push_back((uint8_t)(m_vidPIDReplace & 0xff));         // PIDの上書き
+            buf.push_back(0xf0);
+            buf.push_back(0x03);
+            buf.push_back((uint8_t)RGYTSDescriptor::StreamIdentifier);
+            buf.push_back(0x01);
+            buf.push_back(0x00);
         } else {
             buf.insert(buf.end(), table + pos, table + pos + 5 + esInfoLength);
         }
