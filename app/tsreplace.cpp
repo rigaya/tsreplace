@@ -873,6 +873,19 @@ RGY_ERR TSReplace::writePacket(const RGYTSPacket *pkt) {
     return RGY_ERR_NONE;
 }
 
+uint8_t TSReplace::getvideoDecCtrlEncodeFormat(const int height) {
+    switch (height) {
+    case 1080: return 0x00;
+    case 720:  return 0x02;
+    case 480:  return 0x03;
+    case 240:  return 0x05;
+    case 120:  return 0x06;
+    case 2160: return 0x07;
+    case 180:  return 0x08;
+    case 4320: return 0x0A;
+    default:   return 0x00;
+    }
+}
 RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
     // 参考: https://txqz.net/memo/2012-0916-1729.html
     const auto psi = result.psi.get();
@@ -885,6 +898,8 @@ RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
     if (psi->section_length < pos) {
         return RGY_ERR_INVALID_BINARY;
     }
+
+    //const uint8_t video_encode_format = getvideoDecCtrlEncodeFormat(m_video->getVidCodecPar()->height);
 
     // Create PMT
     std::vector<uint8_t> buf(1, 0);
