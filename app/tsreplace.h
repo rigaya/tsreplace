@@ -97,6 +97,7 @@ public:
     std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> getSample();
     RGYTSStreamType getVideoStreamType() const;
 
+    const AVCodecParameters *getVidCodecPar() const;
     AVCodecID getVidCodecID() const;
     AVRational getVidTimebase() const;
     int64_t getFirstKeyPts() const;

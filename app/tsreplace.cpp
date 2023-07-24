@@ -293,6 +293,13 @@ std::vector<int> TSReplaceVideo::getAVReaderStreamIndex(AVMediaType type) {
     return streams;
 }
 
+const AVCodecParameters *TSReplaceVideo::getVidCodecPar() const {
+    if (m_Demux.video.stream) {
+        return m_Demux.video.stream->codecpar;
+    }
+    return nullptr;
+}
+
 AVCodecID TSReplaceVideo::getVidCodecID() const {
     if (m_Demux.video.stream) {
         return m_Demux.video.stream->codecpar->codec_id;
