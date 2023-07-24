@@ -1029,8 +1029,8 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     pkt.packet.reserve(188);
     for (int i = 0; i < avpkt->size; ) {
         const int pes_header_len = (i > 0) ? 0 : (14 + (addDts ? 5 : 0));
-        const int min_adaption_len = (false && i == 0 && isKey) ? 2 : 0;
-        const int add_aud_len = (false && i == 0 && addAud) ? ((replaceToHEVC) ? 7 : 6) : 0;
+        const int min_adaption_len = (false /*無効化*/ && i == 0 && isKey) ? 2 : 0;
+        const int add_aud_len = (false /*無効化*/ && i == 0 && addAud) ? ((replaceToHEVC) ? 7 : 6) : 0;
         int len = std::min(184 - min_adaption_len, avpkt->size + pes_header_len + add_aud_len - i);
         m_vidCounter = (m_vidCounter + 1) & 0x0f;
 
