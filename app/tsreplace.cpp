@@ -973,17 +973,43 @@ void TSReplace::pushPESPTS(std::vector<uint8_t>& buf, const int64_t pts, const u
     buf.push_back((uint8_t)(b & 0xff));
 }
 
+bool TSReplace::isFirstNalAud(const bool isHEVC, const uint8_t *ptr, const size_t size) {
+    static uint8_t NAL_START_CODE_3[3] = { 0x00, 0x00, 0x01 };
+    static uint8_t NAL_START_CODE_4[4] = { 0x00, 0x00, 0x00, 0x01 };
+    int pos = 0;
+    if (memcmp(ptr, NAL_START_CODE_3, sizeof(NAL_START_CODE_3)) == 0) {
+        pos = 3;
+    } else if (memcmp(ptr, NAL_START_CODE_4, sizeof(NAL_START_CODE_4)) == 0) {
+        pos = 4;
+    }
+    if (pos) {
+        if (isHEVC) {
+            auto nal_type = (ptr[pos] & 0x7f) >> 1;
+            return nal_type == NALU_HEVC_AUD;
+        } else {
+            auto nal_type = (ptr[pos] & 0x1f);
+            return nal_type == NALU_H264_AUD;
+        }
+    }
+    return false;
+}
+
 RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const uint8_t vidStreamID = 0xe0;
     const auto vidPID = m_vidPIDReplace;
     const bool addDts = (avpkt->pts != avpkt->dts);
+    const bool isKey = (avpkt->flags & AV_PKT_FLAG_KEY) != 0;
+    const bool replaceToHEVC = m_video->getVidCodecID() == AV_CODEC_ID_HEVC;
+    const bool addAud = !isFirstNalAud(replaceToHEVC, avpkt->data, avpkt->size);
     const auto pts = av_rescale_q(avpkt->pts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
     const auto dts = av_rescale_q(avpkt->dts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
     RGYTSPacket pkt;
     pkt.packet.reserve(188);
     for (int i = 0; i < avpkt->size; ) {
         const int pes_header_len = (i > 0) ? 0 : (14 + (addDts ? 5 : 0));
-        int len = std::min(184, avpkt->size + pes_header_len - i);
+        const int min_adaption_len = (false && i == 0 && isKey) ? 2 : 0;
+        const int add_aud_len = (false && i == 0 && addAud) ? ((replaceToHEVC) ? 7 : 6) : 0;
+        int len = std::min(184 - min_adaption_len, avpkt->size + pes_header_len + add_aud_len - i);
         m_vidCounter = (m_vidCounter + 1) & 0x0f;
 
         pkt.packet.clear();
@@ -994,7 +1020,7 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
         if (len < 184) {
             pkt.packet.push_back(static_cast<uint8_t>(183 - len));
             if (len < 183) {
-                pkt.packet.push_back(0x00);
+                pkt.packet.push_back((i == 0 && isKey) ? 0x40 : 0x00);
                 pkt.packet.insert(pkt.packet.end(), 182 - len, 0xff);
             }
         }
@@ -1014,9 +1040,21 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
                 pushPESPTS(pkt.packet, pts, 0x20);
             }
         }
+        if (add_aud_len > 0) {
+            static uint8_t NAL_START_CODE[4] = { 0x00, 0x00, 0x00, 0x01 };
+            pkt.packet.insert(pkt.packet.end(), NAL_START_CODE, NAL_START_CODE + sizeof(NAL_START_CODE));
+            if (replaceToHEVC) {
+                pkt.packet.push_back(NALU_HEVC_AUD << 1);
+                pkt.packet.push_back(0x01);
+                pkt.packet.push_back(0x50);
+            } else {
+                pkt.packet.push_back(NALU_H264_AUD);
+                pkt.packet.push_back(isKey ? 0x10 : 0x30);
+            }
+        }
 
-        pkt.packet.insert(pkt.packet.end(), avpkt->data + i, avpkt->data + i + len - pes_header_len);
-        i += (len - pes_header_len);
+        pkt.packet.insert(pkt.packet.end(), avpkt->data + i, avpkt->data + i + len - pes_header_len - add_aud_len);
+        i += (len - pes_header_len - add_aud_len);
         writePacket(&pkt);
     }
     return RGY_ERR_NONE;

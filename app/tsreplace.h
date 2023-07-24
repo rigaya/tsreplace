@@ -185,6 +185,7 @@ protected:
     RGY_ERR writeReplacedVideo(AVPacket *pkt);
     int64_t getOrigPtsOffset();
     void pushPESPTS(std::vector<uint8_t>& buf, const int64_t pts, const uint8_t top4bit);
+    bool isFirstNalAud(const bool isHEVC, const uint8_t *ptr, const size_t size);
 
     void AddMessage(RGYLogLevel log_level, const tstring &str) {
         if (m_log == nullptr || log_level < m_log->getLogLevel(RGY_LOGT_APP)) {
