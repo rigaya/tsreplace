@@ -165,6 +165,7 @@ struct TSRReplaceParams {
     tstring replacefile;
     tstring output;
     TSRReplaceStartPoint startpoint;
+    bool addAud;
 
     TSRReplaceParams();
 };
@@ -240,6 +241,7 @@ protected:
     uint8_t m_pmtCounter; // 出力PMTのカウンタ
     uint8_t m_vidCounter; // 出力映像のカウンタ
     int64_t m_ptswrapOffset; // PCR wrapの加算分
+    bool m_addAud; // audの挿入
 };
 
 #endif //__TSREPLACE_H__

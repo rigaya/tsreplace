@@ -114,7 +114,8 @@ TSRReplaceParams::TSRReplaceParams() :
     input(),
     replacefile(),
     output(),
-    startpoint(TSRReplaceStartPoint::KeyframPts) {
+    startpoint(TSRReplaceStartPoint::KeyframPts),
+    addAud(true) {
 }
 
 TSReplaceVideo::TSReplaceVideo(std::shared_ptr<RGYLog> log) :
@@ -740,7 +741,8 @@ TSReplace::TSReplace() :
     m_video(),
     m_pmtCounter(0),
     m_vidCounter(0),
-    m_ptswrapOffset(0) {
+    m_ptswrapOffset(0),
+    m_addAud(true) {
 
 }
 TSReplace::~TSReplace() {
@@ -752,11 +754,13 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_fileTS = prms.input;
     m_fileOut = prms.output;
     m_startPoint = prms.startpoint;
+    m_addAud = prms.addAud;
 
     AddMessage(RGY_LOG_INFO, _T("Output  file: \"%s\".\n"), prms.output.c_str());
     AddMessage(RGY_LOG_INFO, _T("Input   file: \"%s\".\n"), prms.input.c_str());
     AddMessage(RGY_LOG_INFO, _T("Replace file: \"%s\".\n"), prms.replacefile.c_str());
     AddMessage(RGY_LOG_INFO, _T("Start point : %s.\n"), get_cx_desc(list_startpoint, (int)prms.startpoint));
+    AddMessage(RGY_LOG_INFO, _T("Add AUD     : %s.\n"), m_addAud ? _T("on") : _T("off"));
 
     if (_tcscmp(m_fileTS.c_str(), _T("-")) != 0) {
         AddMessage(RGY_LOG_DEBUG, _T("Open input file \"%s\".\n"), m_fileTS.c_str());
@@ -983,10 +987,10 @@ bool TSReplace::isFirstNalAud(const bool isHEVC, const uint8_t *ptr, const size_
     }
     if (pos) {
         if (isHEVC) {
-            auto nal_type = (ptr[pos] & 0x7f) >> 1;
+            const uint8_t nal_type = (ptr[pos] & 0x7f) >> 1;
             return nal_type == NALU_HEVC_AUD;
         } else {
-            auto nal_type = (ptr[pos] & 0x1f);
+            const uint8_t nal_type = (ptr[pos] & 0x1f);
             return nal_type == NALU_H264_AUD;
         }
     }
@@ -999,15 +1003,16 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const bool addDts = (avpkt->pts != avpkt->dts);
     const bool isKey = (avpkt->flags & AV_PKT_FLAG_KEY) != 0;
     const bool replaceToHEVC = m_video->getVidCodecID() == AV_CODEC_ID_HEVC;
-    const bool addAud = !isFirstNalAud(replaceToHEVC, avpkt->data, avpkt->size);
+    const bool addAud = m_addAud && !isFirstNalAud(replaceToHEVC, avpkt->data, avpkt->size);
     const auto pts = av_rescale_q(avpkt->pts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
     const auto dts = av_rescale_q(avpkt->dts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
+
+    int add_aud_len = (addAud) ? ((replaceToHEVC) ? 7 : 6) : 0;
     RGYTSPacket pkt;
     pkt.packet.reserve(188);
     for (int i = 0; i < avpkt->size; ) {
         const int pes_header_len = (i > 0) ? 0 : (14 + (addDts ? 5 : 0));
         const int min_adaption_len = (false /*無効化*/ && i == 0 && isKey) ? 2 : 0;
-        const int add_aud_len = (false /*無効化*/ && i == 0 && addAud) ? ((replaceToHEVC) ? 7 : 6) : 0;
         int len = std::min(184 - min_adaption_len, avpkt->size + pes_header_len + add_aud_len - i);
         m_vidCounter = (m_vidCounter + 1) & 0x0f;
 
@@ -1045,15 +1050,16 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
             if (replaceToHEVC) {
                 pkt.packet.push_back(NALU_HEVC_AUD << 1);
                 pkt.packet.push_back(0x01);
-                pkt.packet.push_back(0x50);
+                pkt.packet.push_back(((isKey ? 0x00 : 0x02) << 5) | 0x10);
             } else {
                 pkt.packet.push_back(NALU_H264_AUD);
-                pkt.packet.push_back(isKey ? 0x10 : 0x30);
+                pkt.packet.push_back(((isKey ? 0x00 : 0x02) << 5) | 0x10);
             }
         }
 
         pkt.packet.insert(pkt.packet.end(), avpkt->data + i, avpkt->data + i + len - pes_header_len - add_aud_len);
         i += (len - pes_header_len - add_aud_len);
+        add_aud_len = 0;
         writePacket(&pkt);
     }
     return RGY_ERR_NONE;
@@ -1409,6 +1415,14 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
             _ftprintf(stderr, _T("Unknown value for --%s: \"%s\""), option_name, strInput[i]);
             return 1;
         }
+        return 0;
+    }
+    if (IS_OPTION("add-aud")) {
+        prm.addAud = true;
+        return 0;
+    }
+    if (IS_OPTION("no-add-aud")) {
+        prm.addAud = false;
         return 0;
     }
     if (IS_OPTION("log-level")) { // 最初に読み取り済み
