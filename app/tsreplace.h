@@ -33,6 +33,19 @@
 #include "rgy_tsdemux.h"
 #include "rgy_avutil.h"
 
+enum RGYPktFlags : uint32_t {
+    RGY_FLAG_PICT_TYPE_I     = 0x0001000,
+    RGY_FLAG_PICT_TYPE_P     = 0x0002000,
+    RGY_FLAG_PICT_TYPE_B     = 0x0003000,
+    RGY_FLAG_PICT_TYPES      = 0x0003000,
+
+    RGY_FLAG_PICSTRUCT_FIELD = 0x0010000,
+    RGY_FLAG_PICSTRUCT_TFF   = 0x0020000,
+    RGY_FLAG_PICSTRUCT_BFF   = 0x0040000,
+    RGY_FLAG_PICSTRUCT_RFF   = 0x0080000,
+    RGY_FLAG_PICSTRUCTS      = RGY_FLAG_PICSTRUCT_TFF | RGY_FLAG_PICSTRUCT_BFF | RGY_FLAG_PICSTRUCT_RFF,
+};
+
 enum class RGYHEVCBsf {
     INTERNAL,
     LIBAVCODEC
@@ -70,6 +83,10 @@ struct AVDemuxVideo {
     const AVCodec            *codecDecode;                                        //動画のデコーダ (使用しない場合はnullptr)
     std::unique_ptr<AVCodecContext, RGYAVDeleter<AVCodecContext>> codecCtxDecode; //動画のデコーダ (使用しない場合はnullptr)
 
+
+    std::unique_ptr<AVCodecParserContext, decltype(&av_parser_close)> parserCtx;            //動画ストリームのParser
+    std::unique_ptr<AVCodecContext, RGYAVDeleter<AVCodecContext>> codecCtxParser;       //動画ストリームのParser用
+
     RGYHEVCBsf                hevcbsf;               //HEVCのbsfの選択
     bool                      bUseHEVCmp42AnnexB;
     int                       hevcNaluLengthSize;
@@ -106,11 +123,13 @@ public:
 
     RGY_ERR initDecoder();
     RGY_ERR getFirstDecodedPts(int64_t& firstPts);
+    RGY_ERR getFirstPktPts(int64_t& firstPts);
 protected:
     void SetExtraData(AVCodecParameters *codecParam, const uint8_t *data, uint32_t size);
     RGY_ERR GetHeader();
     void hevcMp42Annexb(AVPacket *pkt);
     RGY_ERR initVideoBsfs();
+    RGY_ERR initVideoParser();
 
     void AddMessage(RGYLogLevel log_level, const tstring &str) {
         if (m_log == nullptr || log_level < m_log->getLogLevel(RGY_LOGT_APP)) {
@@ -189,6 +208,7 @@ protected:
     void pushPESPTS(std::vector<uint8_t>& buf, const int64_t pts, const uint8_t top4bit);
     bool isFirstNalAud(const bool isHEVC, const uint8_t *ptr, const size_t size);
     uint8_t getvideoDecCtrlEncodeFormat(const int height);
+    uint8_t getAudValue(const AVPacket *pkt) const;
 
     void AddMessage(RGYLogLevel log_level, const tstring &str) {
         if (m_log == nullptr || log_level < m_log->getLogLevel(RGY_LOGT_APP)) {

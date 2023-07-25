@@ -77,6 +77,8 @@ AVDemuxVideo::AVDemuxVideo() :
     extradata(nullptr),
     extradataSize(0),
     codecCtxDecode(std::unique_ptr<AVCodecContext, RGYAVDeleter<AVCodecContext>>(nullptr, RGYAVDeleter<AVCodecContext>(avcodec_free_context))),
+    parserCtx(std::unique_ptr<AVCodecParserContext, decltype(&av_parser_close)>(nullptr, av_parser_close)),
+    codecCtxParser(std::unique_ptr<AVCodecContext, RGYAVDeleter<AVCodecContext>>(nullptr, RGYAVDeleter<AVCodecContext>(avcodec_free_context))),
     hevcbsf(RGYHEVCBsf::INTERNAL),
     bUseHEVCmp42AnnexB(false),
     hevcNaluLengthSize(0) {
@@ -88,6 +90,9 @@ AVDemuxVideo::~AVDemuxVideo() {
 }
 
 void AVDemuxVideo::close() {
+    parserCtx.reset();
+    codecCtxParser.reset();
+
     codecCtxDecode.reset();
     bsfcCtx.reset();
     if (firstPkt) {
@@ -252,6 +257,58 @@ RGY_ERR TSReplaceVideo::initVideoBsfs() {
             return RGY_ERR_NULL_PTR;
         }
         AddMessage(RGY_LOG_DEBUG, _T("initialized %s filter.\n"), char_to_tstring(filter->name).c_str());
+    }
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR TSReplaceVideo::initVideoParser() {
+    if (m_Demux.video.parserCtx) {
+        AddMessage(RGY_LOG_DEBUG, _T("initVideoParser: Close old parser...\n"));
+        m_Demux.video.parserCtx.reset();
+        AddMessage(RGY_LOG_DEBUG, _T("initVideoParser: Closed old parser.\n"));
+    }
+    if (m_Demux.video.stream->codecpar->extradata != nullptr
+        && m_Demux.video.extradata == nullptr) {
+        return RGY_ERR_MORE_DATA;
+    }
+    m_Demux.video.parserCtx = std::unique_ptr<AVCodecParserContext, decltype(&av_parser_close)>(av_parser_init(m_Demux.video.stream->codecpar->codec_id), av_parser_close);
+    if (m_Demux.video.parserCtx) {
+        m_Demux.video.parserCtx->flags |= PARSER_FLAG_COMPLETE_FRAMES;
+
+        auto codec = avcodec_find_decoder(m_Demux.video.stream->codecpar->codec_id);
+        if (!codec) {
+            AddMessage(RGY_LOG_ERROR, _T("failed to find decoder for %s.\n"), char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str());
+            return RGY_ERR_NULL_PTR;
+        }
+        m_Demux.video.codecCtxParser = std::unique_ptr<AVCodecContext, RGYAVDeleter<AVCodecContext>>(avcodec_alloc_context3(codec), RGYAVDeleter<AVCodecContext>(avcodec_free_context));
+        if (!m_Demux.video.codecCtxParser) {
+            AddMessage(RGY_LOG_ERROR, _T("failed to allocate context for parser.\n"));
+            return RGY_ERR_NULL_PTR;
+        }
+        unique_ptr_custom<AVCodecParameters> codecParamCopy(avcodec_parameters_alloc(), [](AVCodecParameters *pCodecPar) {
+            avcodec_parameters_free(&pCodecPar);
+            });
+        int ret = 0;
+        if (0 > (ret = avcodec_parameters_copy(codecParamCopy.get(), m_Demux.video.stream->codecpar))) {
+            AddMessage(RGY_LOG_ERROR, _T("failed to copy codec param to context for parser: %s.\n"), qsv_av_err2str(ret).c_str());
+            return RGY_ERR_UNKNOWN;
+        }
+        if (m_Demux.video.bsfcCtx || m_Demux.video.bUseHEVCmp42AnnexB) {
+            SetExtraData(codecParamCopy.get(), m_Demux.video.extradata, m_Demux.video.extradataSize);
+        }
+        if (0 > (ret = avcodec_parameters_to_context(m_Demux.video.codecCtxParser.get(), codecParamCopy.get()))) {
+            AddMessage(RGY_LOG_ERROR, _T("failed to set codec param to context for parser: %s.\n"), qsv_av_err2str(ret).c_str());
+            return RGY_ERR_UNKNOWN;
+        }
+        m_Demux.video.codecCtxParser->time_base = av_stream_get_codec_timebase(m_Demux.video.stream);
+        m_Demux.video.codecCtxParser->pkt_timebase = m_Demux.video.stream->time_base;
+        AddMessage(RGY_LOG_DEBUG, _T("initialized %s codec context for parser: time_base: %d/%d, pkt_timebase: %d/%d.\n"),
+            char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str(),
+            m_Demux.video.codecCtxParser->time_base.num, m_Demux.video.codecCtxParser->time_base.den,
+            m_Demux.video.codecCtxParser->pkt_timebase.num, m_Demux.video.codecCtxParser->pkt_timebase.den);
+    } else {
+        AddMessage(RGY_LOG_ERROR, _T("failed to init parser for %s.\n"), char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str());
+        return RGY_ERR_NULL_PTR;
     }
     return RGY_ERR_NONE;
 }
@@ -433,6 +490,12 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, const bool getPkt
         return sts;
     }
 
+    sts = initVideoParser();
+    if (sts != RGY_ERR_NONE) {
+        AddMessage(RGY_LOG_ERROR, _T("failed to init parser.\n"));
+        return sts;
+    }
+
     return RGY_ERR_NONE;
 }
 
@@ -562,6 +625,15 @@ RGY_ERR TSReplaceVideo::initDecoder() {
     return RGY_ERR_NONE;
 }
 
+RGY_ERR TSReplaceVideo::getFirstPktPts(int64_t& firstPts) {
+    auto [ret, avpkt] = getSample();
+    if (ret == 0) {
+        firstPts = avpkt->pts;
+        return RGY_ERR_NONE;
+    }
+    return RGY_ERR_UNKNOWN;
+}
+
 RGY_ERR TSReplaceVideo::getFirstDecodedPts(int64_t& firstPts) {
     auto pkt = m_poolPkt->getFree();
     pkt.reset();
@@ -641,6 +713,37 @@ std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> TSReplaceVide
             if (m_Demux.video.bUseHEVCmp42AnnexB) {
                 hevcMp42Annexb(pkt.get());
             }
+
+            if (m_Demux.video.parserCtx) {
+                uint8_t* dummy = nullptr;
+                int dummy_size = 0;
+                av_parser_parse2(m_Demux.video.parserCtx.get(), m_Demux.video.codecCtxParser.get(), &dummy, &dummy_size, pkt->data, pkt->size, pkt->pts, pkt->dts, pkt->pos);
+                const int pict_type = (uint8_t)(std::max)(m_Demux.video.parserCtx->pict_type, 0);
+                switch (pict_type) {
+                case AV_PICTURE_TYPE_I: pkt->flags |= RGY_FLAG_PICT_TYPE_I | AV_PKT_FLAG_KEY; break;
+                case AV_PICTURE_TYPE_P: pkt->flags |= RGY_FLAG_PICT_TYPE_P; break;
+                case AV_PICTURE_TYPE_B: pkt->flags |= RGY_FLAG_PICT_TYPE_B; break;
+                default: break;
+                }
+                switch (m_Demux.video.parserCtx->picture_structure) {
+                    //フィールドとして符号化されている
+                case AV_PICTURE_STRUCTURE_TOP_FIELD:    pkt->flags |= RGY_FLAG_PICSTRUCT_FIELD | RGY_FLAG_PICSTRUCT_TFF; break;
+                case AV_PICTURE_STRUCTURE_BOTTOM_FIELD: pkt->flags |= RGY_FLAG_PICSTRUCT_FIELD | RGY_FLAG_PICSTRUCT_BFF; break;
+                    //フレームとして符号化されている
+                default:
+                    switch (m_Demux.video.parserCtx->field_order) {
+                    case AV_FIELD_TT:
+                    case AV_FIELD_TB: pkt->flags |= RGY_FLAG_PICSTRUCT_TFF; break;
+                    case AV_FIELD_BT:
+                    case AV_FIELD_BB: pkt->flags |= RGY_FLAG_PICSTRUCT_BFF; break;
+                    default: break;
+                    }
+                }
+                if ((uint8_t)m_Demux.video.parserCtx->repeat_pict) {
+                    pkt->flags |= RGY_FLAG_PICSTRUCT_RFF;
+                }
+            }
+
             const bool keyframe = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
             if (!m_Demux.video.gotFirstKeyframe && !keyframe) {
                 i_samples++;
@@ -822,9 +925,9 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         return RGY_ERR_INVALID_CODEC;
     }
 
-    if (m_startPoint == TSRReplaceStartPoint::LibavDecodePts) {
+    {
         auto inputts = std::make_unique<TSReplaceVideo>(log);
-        auto sts = inputts->initAVReader(m_fileTS, true);
+        auto sts = inputts->initAVReader(m_fileTS, m_startPoint != TSRReplaceStartPoint::KeyframPts);
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
@@ -832,11 +935,31 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
-        sts = inputts->getFirstDecodedPts(m_vidFirstLibavDecPTS);
-        if (sts != RGY_ERR_NONE) {
-            return sts;
+        if (m_startPoint == TSRReplaceStartPoint::LibavDecodePts) {
+            sts = inputts->getFirstDecodedPts(m_vidFirstLibavDecPTS);
+            if (sts != RGY_ERR_NONE) {
+                return sts;
+            }
+            m_vidFirstTimestamp = m_vidFirstLibavDecPTS;
+            AddMessage(RGY_LOG_INFO, _T("First Libav dec PTS: %11lld\n"), m_vidFirstLibavDecPTS);
+        } else {
+            int64_t value = 0;
+            sts = inputts->getFirstPktPts(value);
+            if (sts != RGY_ERR_NONE) {
+                return sts;
+            }
+            if (m_startPoint == TSRReplaceStartPoint::KeyframPts) {
+                m_vidFirstTimestamp = m_vidFirstKeyPTS = value;
+            } else {
+                m_vidFirstTimestamp = m_vidFirstFramePTS = value;
+            }
+            AddMessage(RGY_LOG_INFO, _T("First %sframe PTS: %11lld\n"),
+                (m_startPoint == TSRReplaceStartPoint::KeyframPts) ? _T("key ") : _T(""), value);
         }
-        AddMessage(RGY_LOG_INFO, _T("First Libav dec PTS: %11lld\n"), m_vidFirstLibavDecPTS);
+    }
+    if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
+        AddMessage(RGY_LOG_ERROR, _T("Failed to get first timestamp.\n"));
+        return RGY_ERR_UNKNOWN;
     }
 
     m_vidPIDReplace = 0x0100;
@@ -931,8 +1054,8 @@ RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
     }
 
 
-    buf[2] = 0xb0 | static_cast<uint8_t>((buf.size() + 4 - 4) >> 8);
-    buf[3] = static_cast<uint8_t>(buf.size() + 4 - 4);
+    buf[2] = 0xb0 | (uint8_t)((buf.size() + 4 - 4) >> 8);
+    buf[3] = (uint8_t)(buf.size() + 4 - 4);
 
     if (m_lastPmt.size() == buf.size() + 4 &&
         std::equal(buf.begin(), buf.end(), m_lastPmt.begin())) {
@@ -997,6 +1120,20 @@ bool TSReplace::isFirstNalAud(const bool isHEVC, const uint8_t *ptr, const size_
     return false;
 }
 
+uint8_t TSReplace::getAudValue(const AVPacket *pkt) const {
+    const auto flags = pkt->flags;
+    if (flags & AV_PKT_FLAG_KEY) {
+        return 0;
+    }
+    switch (flags & RGY_FLAG_PICT_TYPES) {
+    case RGY_FLAG_PICT_TYPE_I: return 0;
+    case RGY_FLAG_PICT_TYPE_P: return 1;
+    case RGY_FLAG_PICT_TYPE_B:
+    default:                   return 2;
+    }
+    return 2;
+}
+
 RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const uint8_t vidStreamID = 0xe0;
     const auto vidPID = m_vidPIDReplace;
@@ -1022,7 +1159,7 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
         pkt.packet.push_back((uint8_t)(vidPID & 0xff));
         pkt.packet.push_back((len < 184 ? 0x30 : 0x10) | m_vidCounter);
         if (len < 184) {
-            pkt.packet.push_back(static_cast<uint8_t>(183 - len));
+            pkt.packet.push_back((uint8_t)(183 - len));
             if (len < 183) {
                 pkt.packet.push_back((i == 0 && isKey) ? 0x40 : 0x00);
                 pkt.packet.insert(pkt.packet.end(), 182 - len, 0xff);
@@ -1050,11 +1187,10 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
             if (replaceToHEVC) {
                 pkt.packet.push_back(NALU_HEVC_AUD << 1);
                 pkt.packet.push_back(0x01);
-                pkt.packet.push_back(((isKey ? 0x00 : 0x02) << 5) | 0x10);
             } else {
                 pkt.packet.push_back(NALU_H264_AUD);
-                pkt.packet.push_back(((isKey ? 0x00 : 0x02) << 5) | 0x10);
             }
+            pkt.packet.push_back((getAudValue(avpkt) << 5) | 0x10);
         }
 
         pkt.packet.insert(pkt.packet.end(), avpkt->data + i, avpkt->data + i + len - pes_header_len - add_aud_len);
@@ -1113,7 +1249,8 @@ RGY_ERR TSReplace::restruct() {
     const RGYTS_PAT *pat = nullptr;
     const RGYService *service = nullptr;
     int64_t m_pcr = TIMESTAMP_INVALID_VALUE;
-    uint8_t ts_wrap_check = 0x00;
+    std::unique_ptr<RGYTSDemuxResult> pmtResult;
+
     while (!pat || !service) {
         if (tsPackets.empty() || !pat || !service) {
             auto err = readTS(tsPackets);
@@ -1145,16 +1282,20 @@ RGY_ERR TSReplace::restruct() {
         // PMTを探す
         if (!service) {
             for (auto& tspkt : tsPackets) {
-                auto [err, ret] = m_demuxer->parse(tspkt.get());
+                auto parsed_ret = m_demuxer->parse(tspkt.get());
+                auto err = std::get<0>(parsed_ret);
                 if (err != RGY_ERR_NONE) {
                     return err;
                 }
-                switch (ret.type) {
+                switch (std::get<1>(parsed_ret).type) {
                 case RGYTSPacketType::PAT:
                     pat = m_demuxer->pat();
                     break;
                 case RGYTSPacketType::PMT:
                     service = m_demuxer->service();
+                    if (service) {
+                        pmtResult = std::make_unique<RGYTSDemuxResult>(std::move(std::get<1>(parsed_ret)));
+                    }
                     break;
                 default:
                     break;
@@ -1170,6 +1311,8 @@ RGY_ERR TSReplace::restruct() {
         }
     }
 
+    pat = nullptr;
+    m_vidFirstTimestamp = TIMESTAMP_INVALID_VALUE;
     m_demuxer->resetPCR();
     m_demuxer->resetPSICache();
 
@@ -1183,12 +1326,14 @@ RGY_ERR TSReplace::restruct() {
         }
 
         for (auto& tspkt : tsPackets) {
-            if (tspkt->header.PID == 0x00) { //PAT
-                writeReplacedVideo();
-            } else {
-                auto pmt_pid = m_demuxer->selectServiceID();
-                if (pmt_pid && tspkt->header.PID == pmt_pid->pmt_pid) { // PMT
+            if (pat) {
+                if (tspkt->header.PID == 0x00) { //PAT
                     writeReplacedVideo();
+                } else {
+                    auto pmt_pid = m_demuxer->selectServiceID();
+                    if (pmt_pid && tspkt->header.PID == pmt_pid->pmt_pid) { // PMT
+                        writeReplacedVideo();
+                    }
                 }
             }
             auto [err, ret] = m_demuxer->parse(tspkt.get());
@@ -1199,6 +1344,10 @@ RGY_ERR TSReplace::restruct() {
             case RGYTSPacketType::PAT:
                 pat = m_demuxer->pat();
                 writePacket(tspkt.get());
+                if (pmtResult) {
+                    writeReplacedPMT(*pmtResult);
+                    pmtResult.reset();
+                }
                 break;
             case RGYTSPacketType::PMT:
                 service = m_demuxer->service();
@@ -1216,7 +1365,9 @@ RGY_ERR TSReplace::restruct() {
                     }
                 }
                 m_pcr = pcr;
-                writeReplacedVideo();
+                if (pat) {
+                    writeReplacedVideo();
+                }
                 writePacket(tspkt.get());
                 break; }
             case RGYTSPacketType::VID:
@@ -1225,29 +1376,27 @@ RGY_ERR TSReplace::restruct() {
                     m_vidDTS = ret.dts;
                     if (m_vidFirstFramePTS == TIMESTAMP_INVALID_VALUE) {
                         m_vidFirstFramePTS = m_vidPTS;
-                        if (m_startPoint == TSRReplaceStartPoint::FirstPts) {
-                            m_vidFirstTimestamp = m_vidPTS;
-                            m_vidPTSOutMax = m_vidPTS;
-                        } else if (m_startPoint == TSRReplaceStartPoint::LibavDecodePts) {
-                            m_vidFirstTimestamp = m_vidFirstLibavDecPTS;
-                            m_vidPTSOutMax = m_vidFirstLibavDecPTS;
-                        }
-                        m_vidPTSOutMax = m_vidPTS;
-                        AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstFramePTS);
-                    }
-                    if (tspkt->header.adapt.random_access && m_vidFirstKeyPTS == TIMESTAMP_INVALID_VALUE) {
-                        m_vidFirstKeyPTS = m_vidPTS;
-                        if (m_startPoint == TSRReplaceStartPoint::KeyframPts) {
-                            m_vidFirstTimestamp = m_vidPTS;
-                            m_vidPTSOutMax = m_vidPTS;
-                        }
-                        const auto offset = (int)(m_vidFirstKeyPTS - m_vidFirstFramePTS);
-                        AddMessage(RGY_LOG_INFO, _T("First Video KEY PTS: %11lld, Offset %d [%d ms]\n"),
-                            m_vidFirstKeyPTS, offset, (int)(offset * 1000.0 / (double)TS_TIMEBASE + 0.5));
+                        //AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstFramePTS);
                     }
                     if (m_vidFirstFrameDTS == TIMESTAMP_INVALID_VALUE) {
                         m_vidFirstFrameDTS = m_vidDTS;
-                        AddMessage(RGY_LOG_DEBUG, _T("First Video DTS:     %11lld\n"), m_vidFirstFrameDTS);
+                        //AddMessage(RGY_LOG_DEBUG, _T("First Video DTS:     %11lld\n"), m_vidFirstFrameDTS);
+                    }
+                    if (m_startPoint == TSRReplaceStartPoint::KeyframPts) {
+                        if (tspkt->header.adapt.random_access && m_vidFirstKeyPTS == TIMESTAMP_INVALID_VALUE) {
+                             m_vidFirstKeyPTS = m_vidPTS;
+                        }
+                    }
+                    if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
+                        auto startPoint = TIMESTAMP_INVALID_VALUE;
+                        switch (m_startPoint) {
+                        case TSRReplaceStartPoint::FirstPts:       startPoint = m_vidPTS; break;
+                        case TSRReplaceStartPoint::KeyframPts:     startPoint = m_vidFirstKeyPTS; break;
+                        case TSRReplaceStartPoint::LibavDecodePts: startPoint = m_vidFirstLibavDecPTS; break;
+                        }
+                        if (startPoint == m_vidPTS) {
+                            m_vidPTSOutMax = m_vidFirstTimestamp = startPoint;
+                        }
                     }
                 }
                 break;
@@ -1286,6 +1435,7 @@ static void show_help() {
         _T("\n")
         _T("  --start-point <string>        set start point\n")
         _T("                                  keyframe, firstframe, libav\n");
+        _T("  --(no-)add-aud                auto insert aud unit\n")
         _T("\n")
         _T("   --log-level <string>         set log level\n")
         _T("                                  debug, info(default), warn, error\n");
