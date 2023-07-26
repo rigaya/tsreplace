@@ -120,7 +120,8 @@ TSRReplaceParams::TSRReplaceParams() :
     replacefile(),
     output(),
     startpoint(TSRReplaceStartPoint::KeyframPts),
-    addAud(true) {
+    addAud(true),
+    addHeaders(true) {
 }
 
 TSReplaceVideo::TSReplaceVideo(std::shared_ptr<RGYLog> log) :
@@ -349,6 +350,11 @@ std::vector<int> TSReplaceVideo::getAVReaderStreamIndex(AVMediaType type) {
             });
     }
     return streams;
+}
+
+const uint8_t *TSReplaceVideo::getExtraData(int& size) const {
+    size = m_Demux.video.extradataSize;
+    return m_Demux.video.extradata;
 }
 
 const AVCodecParameters *TSReplaceVideo::getVidCodecPar() const {
@@ -845,7 +851,10 @@ TSReplace::TSReplace() :
     m_pmtCounter(0),
     m_vidCounter(0),
     m_ptswrapOffset(0),
-    m_addAud(true) {
+    m_addAud(true),
+    m_addHeaders(true),
+    m_parseNalH264(get_parse_nal_unit_h264_func()),
+    m_parseNalHevc(get_parse_nal_unit_hevc_func()) {
 
 }
 TSReplace::~TSReplace() {
@@ -858,12 +867,14 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_fileOut = prms.output;
     m_startPoint = prms.startpoint;
     m_addAud = prms.addAud;
+    m_addHeaders = prms.addHeaders;
 
     AddMessage(RGY_LOG_INFO, _T("Output  file: \"%s\".\n"), prms.output.c_str());
     AddMessage(RGY_LOG_INFO, _T("Input   file: \"%s\".\n"), prms.input.c_str());
     AddMessage(RGY_LOG_INFO, _T("Replace file: \"%s\".\n"), prms.replacefile.c_str());
     AddMessage(RGY_LOG_INFO, _T("Start point : %s.\n"), get_cx_desc(list_startpoint, (int)prms.startpoint));
     AddMessage(RGY_LOG_INFO, _T("Add AUD     : %s.\n"), m_addAud ? _T("on") : _T("off"));
+    AddMessage(RGY_LOG_INFO, _T("Add Headers : %s.\n"), m_addHeaders ? _T("on") : _T("off"));
 
     if (_tcscmp(m_fileTS.c_str(), _T("-")) != 0) {
         AddMessage(RGY_LOG_DEBUG, _T("Open input file \"%s\".\n"), m_fileTS.c_str());
@@ -1031,6 +1042,10 @@ RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
     // Create PMT
     std::vector<uint8_t> buf(1, 0);
     buf.insert(buf.end(), table + 0, table + pos); // descriptor まで
+    if (m_demuxer->service()->pidPcr == m_demuxer->service()->vid.pid) {
+        buf[1+ 9] = (uint8_t)((m_vidPIDReplace & 0x1fff) >> 8) | (buf[1 + 9] & 0xE0); // PIDの上書き
+        buf[1+10] = (uint8_t) (m_vidPIDReplace & 0x00ff);                             // PIDの上書き
+    }
 
     const int tableLen = 3 + psi->section_length - 4/*CRC32*/;
     while (pos + 4 < tableLen) {
@@ -1040,8 +1055,8 @@ RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
         
         if (streamType == RGYTSStreamType::H262_VIDEO) {
             buf.push_back((uint8_t)m_video->getVideoStreamType());     // stream typeの上書き
-            buf.push_back((uint8_t)((m_vidPIDReplace & 0x1fff) >> 8) | ((table[pos + 1] & 0xE0) >> 8)); // PIDの上書き
-            buf.push_back((uint8_t)(m_vidPIDReplace & 0xff));         // PIDの上書き
+            buf.push_back((uint8_t)((m_vidPIDReplace & 0x1fff) >> 8) | (table[pos + 1] & 0xE0)); // PIDの上書き
+            buf.push_back((uint8_t) (m_vidPIDReplace & 0x00ff));                                 // PIDの上書き
             buf.push_back(0xf0);
             buf.push_back(0x03);
             buf.push_back((uint8_t)RGYTSDescriptor::StreamIdentifier);
@@ -1052,7 +1067,6 @@ RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
         }
         pos += 5 + esInfoLength;
     }
-
 
     buf[2] = 0xb0 | (uint8_t)((buf.size() + 4 - 4) >> 8);
     buf[3] = (uint8_t)(buf.size() + 4 - 4);
@@ -1134,23 +1148,63 @@ uint8_t TSReplace::getAudValue(const AVPacket *pkt) const {
     return 2;
 }
 
+std::tuple<RGY_ERR, bool, bool> TSReplace::checkPacket(const AVPacket *pkt) {
+    if (m_video->getVidCodecID() == AV_CODEC_ID_H264) {
+        const auto nal_list = m_parseNalH264(pkt->data, pkt->size);
+        const auto h264_aud_nal = std::find_if(nal_list.begin(), nal_list.end(), [](nal_info info) { return info.type == NALU_H264_AUD; });
+        const auto h264_sps_nal = std::find_if(nal_list.begin(), nal_list.end(), [](nal_info info) { return info.type == NALU_H264_SPS; });
+        const auto h264_pps_nal = std::find_if(nal_list.begin(), nal_list.end(), [](nal_info info) { return info.type == NALU_H264_PPS; });
+        const bool header_check = (nal_list.end() != h264_sps_nal) && (nal_list.end() != h264_pps_nal);
+        return { RGY_ERR_NONE, h264_aud_nal != nal_list.end(), header_check };
+    } else if (m_video->getVidCodecID() == AV_CODEC_ID_HEVC) {
+        const auto nal_list = m_parseNalHevc(pkt->data, pkt->size);
+        const auto hevc_aud_nal = std::find_if(nal_list.begin(), nal_list.end(), [](nal_info info) { return info.type == NALU_HEVC_AUD; });
+        const auto hevc_vps_nal = std::find_if(nal_list.begin(), nal_list.end(), [](nal_info info) { return info.type == NALU_HEVC_VPS; });
+        const auto hevc_sps_nal = std::find_if(nal_list.begin(), nal_list.end(), [](nal_info info) { return info.type == NALU_HEVC_SPS; });
+        const auto hevc_pps_nal = std::find_if(nal_list.begin(), nal_list.end(), [](nal_info info) { return info.type == NALU_HEVC_PPS; });
+        const bool header_check = (nal_list.end() != hevc_vps_nal) && (nal_list.end() != hevc_sps_nal) && (nal_list.end() != hevc_pps_nal);
+        return { RGY_ERR_NONE, hevc_aud_nal != nal_list.end(), header_check };
+    }
+    AddMessage(RGY_LOG_ERROR, _T("Unsupported codec %s!\n"), char_to_tstring(avcodec_get_name(m_video->getVidCodecID())).c_str());
+    return { RGY_ERR_UNSUPPORTED, false, false };
+}
+
 RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const uint8_t vidStreamID = 0xe0;
     const auto vidPID = m_vidPIDReplace;
     const bool addDts = (avpkt->pts != avpkt->dts);
     const bool isKey = (avpkt->flags & AV_PKT_FLAG_KEY) != 0;
+    const auto [err, has_aud, has_header] = checkPacket(avpkt);
+    if (err != RGY_ERR_NONE) {
+        return err;
+    }
     const bool replaceToHEVC = m_video->getVidCodecID() == AV_CODEC_ID_HEVC;
-    const bool addAud = m_addAud && !isFirstNalAud(replaceToHEVC, avpkt->data, avpkt->size);
+    const bool addAud = m_addAud && !has_aud;
+    const bool addHeader = m_addHeaders && isKey && !has_header;
     const auto pts = av_rescale_q(avpkt->pts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
     const auto dts = av_rescale_q(avpkt->dts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
 
     int add_aud_len = (addAud) ? ((replaceToHEVC) ? 7 : 6) : 0;
+    const  uint8_t *header = nullptr;
+    int add_header_len = 0;
+    if (addHeader) {
+        header = m_video->getExtraData(add_header_len);
+        if (!header) {
+            AddMessage(RGY_LOG_ERROR, _T("Failed to get header!\n"));
+            return RGY_ERR_NULL_PTR;
+        }
+    }
+
     RGYTSPacket pkt;
     pkt.packet.reserve(188);
     for (int i = 0; i < avpkt->size; ) {
         const int pes_header_len = (i > 0) ? 0 : (14 + (addDts ? 5 : 0));
         const int min_adaption_len = (false /*無効化*/ && i == 0 && isKey) ? 2 : 0;
-        int len = std::min(184 - min_adaption_len, avpkt->size + pes_header_len + add_aud_len - i);
+        int len = std::min(184 - min_adaption_len, avpkt->size + pes_header_len + add_aud_len + add_header_len - i);
+        if (pes_header_len + add_aud_len + add_header_len + min_adaption_len > 184) {
+            AddMessage(RGY_LOG_ERROR, _T("Header size %d is too long, unsupported!\n"), add_header_len);
+            return RGY_ERR_UNSUPPORTED;
+        }
         m_vidCounter = (m_vidCounter + 1) & 0x0f;
 
         pkt.packet.clear();
@@ -1192,10 +1246,14 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
             }
             pkt.packet.push_back((getAudValue(avpkt) << 5) | 0x10);
         }
+        if (add_header_len > 0) {
+            pkt.packet.insert(pkt.packet.end(), header, header + add_header_len);
+        }
 
-        pkt.packet.insert(pkt.packet.end(), avpkt->data + i, avpkt->data + i + len - pes_header_len - add_aud_len);
-        i += (len - pes_header_len - add_aud_len);
+        pkt.packet.insert(pkt.packet.end(), avpkt->data + i, avpkt->data + i + len - pes_header_len - add_aud_len - add_header_len);
+        i += (len - pes_header_len - add_aud_len - add_header_len);
         add_aud_len = 0;
+        add_header_len = 0;
         writePacket(&pkt);
     }
     return RGY_ERR_NONE;
@@ -1328,11 +1386,15 @@ RGY_ERR TSReplace::restruct() {
         for (auto& tspkt : tsPackets) {
             if (pat) {
                 if (tspkt->header.PID == 0x00) { //PAT
-                    writeReplacedVideo();
+                    if (auto err = writeReplacedVideo(); err != RGY_ERR_NONE) {
+                        return err;
+                    }
                 } else {
                     auto pmt_pid = m_demuxer->selectServiceID();
                     if (pmt_pid && tspkt->header.PID == pmt_pid->pmt_pid) { // PMT
-                        writeReplacedVideo();
+                        if (auto err = writeReplacedVideo(); err != RGY_ERR_NONE) {
+                            return err;
+                        }
                     }
                 }
             }
@@ -1366,7 +1428,9 @@ RGY_ERR TSReplace::restruct() {
                 }
                 m_pcr = pcr;
                 if (pat) {
-                    writeReplacedVideo();
+                    if (auto err = writeReplacedVideo(); err != RGY_ERR_NONE) {
+                        return err;
+                    }
                 }
                 writePacket(tspkt.get());
                 break; }
@@ -1436,6 +1500,7 @@ static void show_help() {
         _T("  --start-point <string>        set start point\n")
         _T("                                  keyframe, firstframe, libav\n");
         _T("  --(no-)add-aud                auto insert aud unit\n")
+        _T("  --(no-)add-headers            auto insert headers\n")
         _T("\n")
         _T("   --log-level <string>         set log level\n")
         _T("                                  debug, info(default), warn, error\n");
@@ -1575,6 +1640,14 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
         prm.addAud = false;
         return 0;
     }
+    if (IS_OPTION("add-headers")) {
+        prm.addHeaders = true;
+        return 0;
+    }
+    if (IS_OPTION("no-add-headers")) {
+        prm.addHeaders = false;
+        return 0;
+    }
     if (IS_OPTION("log-level")) { // 最初に読み取り済み
         i++;
         return 0;
@@ -1691,6 +1764,7 @@ int _tmain(const int argc, const TCHAR **argv) {
     }
 
     auto log = std::make_shared<RGYLog>(nullptr, loglevel);
+    log->write(RGY_LOG_INFO, RGY_LOGT_APP, _T("%s\n"), get_app_version());
     TSReplace restruct;
     auto err = restruct.init(log, prm);
     if (err != RGY_ERR_NONE) return 1;
