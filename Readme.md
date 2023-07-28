@@ -32,13 +32,13 @@ timestampを保持できるコンテナ入りの映像を想定しており、ra
 置き換え時の時刻の起点を指定します。
 
 - **パラメータ**
-  - keyframe (デフォルト)
+  - keyframe (デフォルト)  
     最初のキーフレームの時刻を起点とします。tsファイルを[QSVEncC](https://github.com/rigaya/QSVEnc)/[NVEncC](https://github.com/rigaya/NVEnc)/[VCEEncC](https://github.com/rigaya/VCEEnc)/[rkmppenc](https://github.com/rigaya/rkmppenc)でエンコードした場合に使用します。
 
-  - firstframe
-    最初のフレームの時刻を起点とします。tsファイルをlwinput.auiで読み込んだ場合に使用します。
+  - firstframe  
+    最初のフレームの時刻を起点とします。tsファイルをlwinput.auiで読み込みエンコードした場合に使用します。
 
-  - firstpacket
+  - firstpacket  
     映像・音声の最初のパケットの時刻を起点とします。tsファイルをffmpegでエンコードした場合に使用します。
 
 ### --add-aud
