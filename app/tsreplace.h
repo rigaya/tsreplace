@@ -33,6 +33,20 @@
 #include "rgy_tsdemux.h"
 #include "rgy_avutil.h"
 
+enum class TSRReplaceStartPoint {
+    KeyframPts,
+    FirstFrame,
+    FirstPacket,
+};
+
+static const CX_DESC list_startpoint[] = {
+    { _T("keyframe"),    (int)TSRReplaceStartPoint::KeyframPts },
+    { _T("firstframe"),  (int)TSRReplaceStartPoint::FirstFrame },
+    { _T("firstpacket"), (int)TSRReplaceStartPoint::FirstPacket },
+    { nullptr, 0 }
+};
+
+
 enum RGYPktFlags : uint32_t {
     RGY_FLAG_PICT_TYPE_I     = 0x0001000,
     RGY_FLAG_PICT_TYPE_P     = 0x0002000,
@@ -73,7 +87,6 @@ struct AVDemuxVideo {
     int64_t                   streamFirstKeyPts;     //動画ファイルの最初のpts
     AVPacket                 *firstPkt;              //動画の最初のpacket
     uint32_t                  streamPtsInvalid;      //動画ファイルのptsが無効 (H.264/ES, 等)
-    bool                      getPktBeforeKey;       //動画の先頭がキーフレームでなくても全サンプルを取得する
     bool                      gotFirstKeyframe;      //動画の最初のキーフレームを取得済み
     int                       keyFrameOffset;
     std::unique_ptr<AVBSFContext, RGYAVDeleter<AVBSFContext>> bsfcCtx;
@@ -110,7 +123,7 @@ public:
     TSReplaceVideo(std::shared_ptr<RGYLog> log);
     virtual ~TSReplaceVideo();
     std::vector<int> getAVReaderStreamIndex(AVMediaType type);
-    RGY_ERR initAVReader(const tstring& videofile, const bool getPktBeforeKey);
+    RGY_ERR initAVReader(const tstring& videofile);
     std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> getSample();
     RGYTSStreamType getVideoStreamType() const;
 
@@ -123,8 +136,7 @@ public:
     std::tuple<RGY_ERR, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> getFrontPktAndPop();
 
     RGY_ERR initDecoder();
-    RGY_ERR getFirstDecodedPts(int64_t& firstPts);
-    RGY_ERR getFirstPktPts(int64_t& firstPts);
+    RGY_ERR getFirstPts(int64_t& firstPTSVideoAudioStreams, int64_t& firstPTSFrame, int64_t& firstPTSKeyFrame);
 protected:
     void SetExtraData(AVCodecParameters *codecParam, const uint8_t *data, uint32_t size);
     RGY_ERR GetHeader();
@@ -164,20 +176,8 @@ protected:
     std::unique_ptr<RGYPoolAVPacket> m_poolPkt;
     std::vector<uint8_t> m_hevcMp42AnnexbBuffer;       //HEVCのmp4->AnnexB簡易変換用バッファ;
     std::deque<std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> m_packets;
-};
-
-
-enum class TSRReplaceStartPoint {
-    KeyframPts,
-    FirstPts,
-    LibavDecodePts,
-};
-
-static const CX_DESC list_startpoint[] = {
-    { _T("keyframe"),   (int)TSRReplaceStartPoint::KeyframPts },
-    { _T("firstframe"), (int)TSRReplaceStartPoint::FirstPts },
-    { _T("libav"),      (int)TSRReplaceStartPoint::LibavDecodePts },
-    { nullptr, 0 }
+    int64_t m_firstPTSFrame;              //最初のフレームのpts
+    int64_t m_firstPTSVideoAudioStreams;  //全ストリームの最初のpts
 };
 
 struct TSRReplaceParams {
@@ -212,6 +212,7 @@ protected:
     uint8_t getvideoDecCtrlEncodeFormat(const int height);
     uint8_t getAudValue(const AVPacket *pkt) const;
     std::tuple<RGY_ERR, bool, bool> checkPacket(const AVPacket *pkt);
+    int64_t getStartPointPTS() const;
 
     void AddMessage(RGYLogLevel log_level, const tstring &str) {
         if (m_log == nullptr || log_level < m_log->getLogLevel(RGY_LOGT_APP)) {
@@ -258,7 +259,7 @@ protected:
     int64_t m_vidFirstKeyPTS;   // 最初の動画キーフレームのPTS
     TSRReplaceStartPoint m_startPoint; // 起点モード
     int64_t m_vidFirstTimestamp;       // 起点のtimestamp
-    int64_t m_vidFirstLibavDecPTS;     // libavでデコードした時の最初のPTS
+    int64_t m_vidFirstPacketPTS;       // 最初のパケットのPTS
     std::vector<uint8_t> m_lastPmt; // 直前の出力PMTデータ
     std::unique_ptr<TSReplaceVideo> m_video; // 置き換え対象の動画の読み込み用
     uint8_t m_pmtCounter; // 出力PMTのカウンタ

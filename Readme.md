@@ -33,13 +33,13 @@ timestampを保持できるコンテナ入りの映像を想定しており、ra
 
 - **パラメータ**
   - keyframe (デフォルト)
-    最初のキーフレームの時刻を起点とします。
-
-  - libav
-    libavcodecでデコードして得られた最初のフレームの時刻を起点とします。
+    最初のキーフレームの時刻を起点とします。tsファイルを[QSVEncC](https://github.com/rigaya/QSVEnc)/[NVEncC](https://github.com/rigaya/NVEnc)/[VCEEncC](https://github.com/rigaya/VCEEnc)/[rkmppenc](https://github.com/rigaya/rkmppenc)でエンコードした場合に使用します。
 
   - firstframe
-    最初のフレームの時刻を起点とします。音ズレするため、テスト用です。
+    最初のフレームの時刻を起点とします。tsファイルをlwinput.auiで読み込んだ場合に使用します。
+
+  - firstpacket
+    映像・音声の最初のパケットの時刻を起点とします。tsファイルをffmpegでエンコードした場合に使用します。
 
 ### --add-aud
 映像パケットごとにAUDを自動挿入します。(デフォルト：オン)

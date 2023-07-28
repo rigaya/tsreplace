@@ -76,6 +76,7 @@ AVDemuxVideo::AVDemuxVideo() :
     bsfcCtx(std::unique_ptr<AVBSFContext, RGYAVDeleter<AVBSFContext>>(nullptr, RGYAVDeleter<AVBSFContext>(av_bsf_free))),
     extradata(nullptr),
     extradataSize(0),
+    codecDecode(nullptr),
     codecCtxDecode(std::unique_ptr<AVCodecContext, RGYAVDeleter<AVCodecContext>>(nullptr, RGYAVDeleter<AVCodecContext>(avcodec_free_context))),
     parserCtx(std::unique_ptr<AVCodecParserContext, decltype(&av_parser_close)>(nullptr, av_parser_close)),
     codecCtxParser(std::unique_ptr<AVCodecContext, RGYAVDeleter<AVCodecContext>>(nullptr, RGYAVDeleter<AVCodecContext>(avcodec_free_context))),
@@ -130,7 +131,9 @@ TSReplaceVideo::TSReplaceVideo(std::shared_ptr<RGYLog> log) :
     m_log(log),
     m_poolPkt(std::make_unique<RGYPoolAVPacket>()),
     m_hevcMp42AnnexbBuffer(),
-    m_packets() {
+    m_packets(),
+    m_firstPTSFrame(TIMESTAMP_INVALID_VALUE),
+    m_firstPTSVideoAudioStreams(TIMESTAMP_INVALID_VALUE) {
 
 }
 
@@ -385,7 +388,7 @@ RGYTSStreamType TSReplaceVideo::getVideoStreamType() const {
     return RGYTSStreamType::UNKNOWN;
 }
 
-RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, const bool getPktBeforeKey) {
+RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile) {
     if (!check_avcodec_dll()) {
         AddMessage(RGY_LOG_ERROR, error_mes_avcodec_dll_not_found());
         return RGY_ERR_NULL_PTR;
@@ -469,7 +472,6 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, const bool getPkt
         return RGY_ERR_INVALID_DATA_TYPE;
     }
 
-    m_Demux.video.getPktBeforeKey = getPktBeforeKey;
     m_Demux.video.index = videoStreams.front();
     m_Demux.video.stream = m_Demux.format.formatCtx->streams[m_Demux.video.index];
     AddMessage(RGY_LOG_INFO, _T("Opened video stream #%d, %s, %dx%d (%s), stream time_base %d/%d, codec_timebase %d/%d.\n"),
@@ -501,6 +503,9 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, const bool getPkt
         AddMessage(RGY_LOG_ERROR, _T("failed to init parser.\n"));
         return sts;
     }
+
+    m_firstPTSFrame = TIMESTAMP_INVALID_VALUE;
+    m_firstPTSVideoAudioStreams = TIMESTAMP_INVALID_VALUE;
 
     return RGY_ERR_NONE;
 }
@@ -631,16 +636,35 @@ RGY_ERR TSReplaceVideo::initDecoder() {
     return RGY_ERR_NONE;
 }
 
-RGY_ERR TSReplaceVideo::getFirstPktPts(int64_t& firstPts) {
+RGY_ERR TSReplaceVideo::getFirstPts(int64_t& firstPTSVideoAudioStreams, int64_t& firstPTSFrame, int64_t& firstPTSKeyFrame) {
+    firstPTSVideoAudioStreams = TIMESTAMP_INVALID_VALUE;
+    firstPTSFrame = TIMESTAMP_INVALID_VALUE;
+    firstPTSKeyFrame = TIMESTAMP_INVALID_VALUE;
     auto [ret, avpkt] = getSample();
     if (ret == 0) {
-        firstPts = avpkt->pts;
+        firstPTSVideoAudioStreams = m_firstPTSVideoAudioStreams;
+        firstPTSFrame = m_firstPTSFrame;
+        firstPTSKeyFrame = m_Demux.video.streamFirstKeyPts;
         return RGY_ERR_NONE;
     }
     return RGY_ERR_UNKNOWN;
 }
 
-RGY_ERR TSReplaceVideo::getFirstDecodedPts(int64_t& firstPts) {
+#if 0
+RGY_ERR TSReplaceVideo::getFirstDecodedPts(int64_t& firstPts, const TSRReplaceStartPoint startpoint) {
+
+    switch (startpoint) {
+    case TSRReplaceStartPoint::KeyframPts:
+        m_Demux.video.getPktBeforeKey = false;
+        break;
+    case TSRReplaceStartPoint::LibavDecodeAll:
+    case TSRReplaceStartPoint::LibavDecodePts:
+    case TSRReplaceStartPoint::FirstPts:
+    default:
+        m_Demux.video.getPktBeforeKey = true;
+        break;
+    }
+
     auto pkt = m_poolPkt->getFree();
     pkt.reset();
 
@@ -684,6 +708,7 @@ RGY_ERR TSReplaceVideo::getFirstDecodedPts(int64_t& firstPts) {
     }
     return RGY_ERR_NONE;
 }
+#endif
 
 std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> TSReplaceVideo::getSample() {
     int i_samples = 0;
@@ -695,7 +720,16 @@ std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> TSReplaceVide
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
+        const auto stream_media_type = m_Demux.format.formatCtx->streams[m_Demux.video.index]->codecpar->codec_type;
+        if (m_firstPTSVideoAudioStreams == TIMESTAMP_INVALID_VALUE
+            && pkt->pts != AV_NOPTS_VALUE
+            && stream_media_type == AVMEDIA_TYPE_VIDEO || stream_media_type == AVMEDIA_TYPE_AUDIO) {
+            m_firstPTSVideoAudioStreams = pkt->pts;
+        }
         if (pkt->stream_index == m_Demux.video.index) {
+            if (m_firstPTSFrame == TIMESTAMP_INVALID_VALUE) {
+                m_firstPTSFrame = pkt->pts;
+            }
             if (pkt->flags & AV_PKT_FLAG_CORRUPT) {
                 const auto timestamp = (pkt->pts == AV_NOPTS_VALUE) ? pkt->dts : pkt->pts;
                 AddMessage(RGY_LOG_WARN, _T("corrupt packet in video: %lld (%s)\n"), (long long int)timestamp, getTimestampString(timestamp, m_Demux.video.stream->time_base).c_str());
@@ -753,12 +787,8 @@ std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> TSReplaceVide
             const bool keyframe = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
             if (!m_Demux.video.gotFirstKeyframe && !keyframe) {
                 i_samples++;
-                if (m_Demux.video.getPktBeforeKey) {
-                    return { 0, std::move(pkt) };
-                } else {
-                    av_packet_unref(pkt.get());
-                    continue;
-                }
+                av_packet_unref(pkt.get());
+                continue;
             } else if (!m_Demux.video.gotFirstKeyframe) {
                 if (pkt->flags & AV_PKT_FLAG_DISCARD) {
                     //timestampが正常に設定されておらず、移乗動作の原因となるので、
@@ -845,7 +875,7 @@ TSReplace::TSReplace() :
     m_vidFirstKeyPTS(TIMESTAMP_INVALID_VALUE),
     m_startPoint(TSRReplaceStartPoint::KeyframPts),
     m_vidFirstTimestamp(TIMESTAMP_INVALID_VALUE),
-    m_vidFirstLibavDecPTS(TIMESTAMP_INVALID_VALUE),
+    m_vidFirstPacketPTS(TIMESTAMP_INVALID_VALUE),
     m_lastPmt(),
     m_video(),
     m_pmtCounter(0),
@@ -931,7 +961,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_demuxer->init(log);
 
     m_video = std::make_unique<TSReplaceVideo>(log);
-    if (auto sts = m_video->initAVReader(prms.replacefile, false); sts != RGY_ERR_NONE) {
+    if (auto sts = m_video->initAVReader(prms.replacefile); sts != RGY_ERR_NONE) {
         return sts;
     }
 
@@ -943,7 +973,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
 
     {
         auto inputts = std::make_unique<TSReplaceVideo>(log);
-        auto sts = inputts->initAVReader(m_fileTS, m_startPoint != TSRReplaceStartPoint::KeyframPts);
+        auto sts = inputts->initAVReader(m_fileTS);
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
@@ -951,29 +981,21 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
-        if (m_startPoint == TSRReplaceStartPoint::LibavDecodePts) {
-            sts = inputts->getFirstDecodedPts(m_vidFirstLibavDecPTS);
-            if (sts != RGY_ERR_NONE) {
-                return sts;
-            }
-            m_vidFirstTimestamp = m_vidFirstLibavDecPTS;
-            AddMessage(RGY_LOG_INFO, _T("First Libav dec PTS: %11lld\n"), m_vidFirstLibavDecPTS);
-        } else {
-            int64_t value = 0;
-            sts = inputts->getFirstPktPts(value);
-            if (sts != RGY_ERR_NONE) {
-                return sts;
-            }
-            if (m_startPoint == TSRReplaceStartPoint::KeyframPts) {
-                m_vidFirstTimestamp = m_vidFirstKeyPTS = value;
-            } else {
-                m_vidFirstTimestamp = m_vidFirstFramePTS = value;
-            }
-            AddMessage(RGY_LOG_INFO, _T("First %sframe PTS: %11lld\n"),
-                (m_startPoint == TSRReplaceStartPoint::KeyframPts) ? _T("key ") : _T(""), value);
+        sts = inputts->getFirstPts(m_vidFirstPacketPTS, m_vidFirstFramePTS, m_vidFirstKeyPTS);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
         }
+        AddMessage(RGY_LOG_INFO, _T("%s First packet PTS: %11lld [%+7.1f ms] [%+7.1f ms]\n"),
+           (prms.startpoint == TSRReplaceStartPoint::FirstPacket) ? _T("*") : _T(" "),
+            m_vidFirstPacketPTS, (m_vidFirstPacketPTS - m_vidFirstPacketPTS) * 1000.0 / (double)TS_TIMEBASE, (m_vidFirstPacketPTS - m_vidFirstFramePTS) * 1000.0 / (double)TS_TIMEBASE);
+        AddMessage(RGY_LOG_INFO, _T("%s First frame  PTS: %11lld [%+7.1f ms] [%+7.1f ms]\n"),
+            (prms.startpoint == TSRReplaceStartPoint::FirstFrame) ? _T("*") : _T(" "),
+            m_vidFirstFramePTS, (m_vidFirstFramePTS - m_vidFirstPacketPTS) * 1000.0 / (double)TS_TIMEBASE, (m_vidFirstFramePTS - m_vidFirstFramePTS) * 1000.0 / (double)TS_TIMEBASE);
+        AddMessage(RGY_LOG_INFO, _T("%s First key    PTS: %11lld [%+7.1f ms] [%+7.1f ms]\n"),
+            (prms.startpoint == TSRReplaceStartPoint::KeyframPts) ? _T("*") : _T(" "),
+            m_vidFirstKeyPTS, (m_vidFirstKeyPTS - m_vidFirstPacketPTS) * 1000.0 / (double)TS_TIMEBASE, (m_vidFirstKeyPTS - m_vidFirstFramePTS) * 1000.0 / (double)TS_TIMEBASE);
     }
-    if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
+    if (getStartPointPTS() == TIMESTAMP_INVALID_VALUE) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to get first timestamp.\n"));
         return RGY_ERR_UNKNOWN;
     }
@@ -1307,6 +1329,15 @@ RGY_ERR TSReplace::writeReplacedVideo() {
     return RGY_ERR_NONE;
 }
 
+int64_t TSReplace::getStartPointPTS() const {
+    switch (m_startPoint) {
+    case TSRReplaceStartPoint::FirstPacket:    return m_vidFirstPacketPTS;
+    case TSRReplaceStartPoint::FirstFrame:     return m_vidFirstFramePTS;
+    case TSRReplaceStartPoint::KeyframPts:     return m_vidFirstKeyPTS;
+    }
+    return TIMESTAMP_INVALID_VALUE;
+}
+
 RGY_ERR TSReplace::restruct() {
     std::vector<uniqueRGYTSPacket> tsPackets;
     const RGYTS_PAT *pat = nullptr;
@@ -1414,6 +1445,12 @@ RGY_ERR TSReplace::restruct() {
                 if (pmtResult) {
                     writeReplacedPMT(*pmtResult);
                     pmtResult.reset();
+                    if (m_startPoint == TSRReplaceStartPoint::FirstPacket) {
+                        m_vidPTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
+                        if (auto err = writeReplacedVideo(); err != RGY_ERR_NONE) {
+                            return err;
+                        }
+                    }
                 }
                 break;
             case RGYTSPacketType::PMT:
@@ -1451,20 +1488,10 @@ RGY_ERR TSReplace::restruct() {
                         m_vidFirstFrameDTS = m_vidDTS;
                         //AddMessage(RGY_LOG_DEBUG, _T("First Video DTS:     %11lld\n"), m_vidFirstFrameDTS);
                     }
-                    if (m_startPoint == TSRReplaceStartPoint::KeyframPts) {
-                        if (tspkt->header.adapt.random_access && m_vidFirstKeyPTS == TIMESTAMP_INVALID_VALUE) {
-                             m_vidFirstKeyPTS = m_vidPTS;
-                        }
-                    }
                     if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
-                        auto startPoint = TIMESTAMP_INVALID_VALUE;
-                        switch (m_startPoint) {
-                        case TSRReplaceStartPoint::FirstPts:       startPoint = m_vidPTS; break;
-                        case TSRReplaceStartPoint::KeyframPts:     startPoint = m_vidFirstKeyPTS; break;
-                        case TSRReplaceStartPoint::LibavDecodePts: startPoint = m_vidFirstLibavDecPTS; break;
-                        }
-                        if (startPoint == m_vidPTS) {
-                            m_vidPTSOutMax = m_vidFirstTimestamp = startPoint;
+                        const auto startPoint = getStartPointPTS();
+                        if (startPoint <= m_vidPTS) {
+                            m_vidPTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
                         }
                     }
                 }
@@ -1503,7 +1530,7 @@ static void show_help() {
         _T("-o,--output <filename>          set output ts filename\n")
         _T("\n")
         _T("  --start-point <string>        set start point\n")
-        _T("                                  keyframe, firstframe, libav\n");
+        _T("                                  keyframe, firstframe, firstpacket\n");
         _T("  --(no-)add-aud                auto insert aud unit\n")
         _T("  --(no-)add-headers            auto insert headers\n")
         _T("\n")
