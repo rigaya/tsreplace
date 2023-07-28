@@ -887,6 +887,10 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
             return RGY_ERR_FILE_OPEN;
         }
     } else {
+#if 1
+        AddMessage(RGY_LOG_ERROR, _T("stdin input not supported for -i, --input.\n"));
+        return RGY_ERR_UNSUPPORTED;
+#else
         AddMessage(RGY_LOG_DEBUG, _T("Open input file stdin.\n"));
         m_fpTSIn = std::unique_ptr<FILE, fp_deleter>(stdin, fp_deleter());
 #if defined(_WIN32) || defined(_WIN64)
@@ -895,6 +899,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
             return RGY_ERR_UNDEFINED_BEHAVIOR;
         }
 #endif //#if defined(_WIN32) || defined(_WIN64)
+#endif
     }
 
     if (_tcscmp(m_fileOut.c_str(), _T("-")) != 0) {
