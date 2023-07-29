@@ -133,7 +133,7 @@ Usage: ./configure [options]
 options:
   -h, --help               print this message
 
-  --prefix=PREFIX          install qsvencc into PREFIX/bin [${PREFIX}]
+  --prefix=PREFIX          install tsreplace into PREFIX/bin [${PREFIX}]
 
   --cxx=CXX                set C++ compiler path [${CXX}]
   --pkg-config=PKGCONFIG   set pkg-config path [${PKGCONFIG}]
@@ -397,7 +397,7 @@ if [ $ENABLE_AVSW_READER -ne 0 ]; then
         cnf_write "yes"
     fi
     if [ $ENABLE_AVSW_READER -eq 0 ]; then
-        cnf_write "libavutil, libavcodec, libavformat, libavfilter, libswresample are required to build qsvencc."
+        cnf_write "libavutil, libavcodec, libavformat, libavfilter, libswresample are required to build tsreplace."
         exit 1
     fi
 fi

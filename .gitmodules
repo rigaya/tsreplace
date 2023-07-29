@@ -1,0 +1,3 @@
+[submodule "build_pkg"]
+	path = build_pkg
+	url = https://github.com/rigaya/build_pkg.git
