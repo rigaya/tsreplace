@@ -723,7 +723,7 @@ std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> TSReplaceVide
         const auto stream_media_type = m_Demux.format.formatCtx->streams[m_Demux.video.index]->codecpar->codec_type;
         if (m_firstPTSVideoAudioStreams == TIMESTAMP_INVALID_VALUE
             && pkt->pts != AV_NOPTS_VALUE
-            && stream_media_type == AVMEDIA_TYPE_VIDEO || stream_media_type == AVMEDIA_TYPE_AUDIO) {
+            && (stream_media_type == AVMEDIA_TYPE_VIDEO || stream_media_type == AVMEDIA_TYPE_AUDIO)) {
             m_firstPTSVideoAudioStreams = pkt->pts;
         }
         if (pkt->stream_index == m_Demux.video.index) {
@@ -1498,6 +1498,8 @@ RGY_ERR TSReplace::restruct() {
                 break;
             case RGYTSPacketType::OTHER:
                 writePacket(tspkt.get());
+                break;
+            default:
                 break;
             }
         }

@@ -26,6 +26,7 @@
 // ------------------------------------------------------------------------------------------
 
 #include "rgy_tsstruct.h"
+#include <cstring>
 
 void RGYTSPacketDeleter::operator()(RGYTSPacket *pkt) {
     if (pkt) {

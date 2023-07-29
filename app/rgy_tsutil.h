@@ -30,6 +30,7 @@
 
 #include <vector>
 #include <cstdint>
+#include <cstdlib>
 
 static const int64_t TIMESTAMP_INVALID_VALUE = ((int64_t)0x8000000000000000);
 

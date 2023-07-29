@@ -26,6 +26,7 @@
 // ------------------------------------------------------------------------------------------
 
 #include "rgy_tsutil.h"
+#include <cstring>
 
 uint32_t calc_crc32(const uint8_t *data, const int data_size) {
     uint32_t crc = 0xffffffff;
