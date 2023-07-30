@@ -1022,8 +1022,21 @@ RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
             return ret;
         }
         if (packets.size() > 0) {
+            int pktNot188Count = 0;
             for (auto& pkt : packets) {
-                packetBuffer.push_back(std::move(pkt));
+                if (pkt->datasize() == 188) {
+                    packetBuffer.push_back(std::move(pkt));
+                } else {
+                    pktNot188Count++;
+                }
+            }
+            if (pktNot188Count > 0) {
+                if (pktNot188Count >= 5) {
+                    AddMessage(RGY_LOG_ERROR, _T("Invalid packets (non 188 byte) found.\n"));
+                    return RGY_ERR_INVALID_BINARY;
+                } else {
+                    AddMessage(RGY_LOG_WARN, _T("Invalid %d packet removed.\n"), pktNot188Count);
+                }
             }
             return RGY_ERR_NONE;
         }
