@@ -1435,13 +1435,13 @@ RGY_ERR TSReplace::restruct() {
         for (auto& tspkt : tsPackets) {
             if (pat) {
                 if (tspkt->header.PID == 0x00) { //PAT
-                    if (auto err = writeReplacedVideo(); err != RGY_ERR_NONE) {
+                    if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
                         return err;
                     }
                 } else {
                     auto pmt_pid = m_demuxer->selectServiceID();
                     if (pmt_pid && tspkt->header.PID == pmt_pid->pmt_pid) { // PMT
-                        if (auto err = writeReplacedVideo(); err != RGY_ERR_NONE) {
+                        if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
                             return err;
                         }
                     }
@@ -1460,7 +1460,7 @@ RGY_ERR TSReplace::restruct() {
                     pmtResult.reset();
                     if (m_startPoint == TSRReplaceStartPoint::FirstPacket) {
                         m_vidPTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
-                        if (auto err = writeReplacedVideo(); err != RGY_ERR_NONE) {
+                        if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
                             return err;
                         }
                     }
@@ -1483,7 +1483,7 @@ RGY_ERR TSReplace::restruct() {
                 }
                 m_pcr = pcr;
                 if (pat) {
-                    if (auto err = writeReplacedVideo(); err != RGY_ERR_NONE) {
+                    if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
                         return err;
                     }
                 }
