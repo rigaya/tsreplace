@@ -57,7 +57,7 @@ void RGYTSBuffer::addData(void *ptr, const size_t addSize) {
         buffer.resize(std::max(bufLength + addSize, buffer.size() * 3 / 2));
     }
     if (buffer.size() < bufLength + bufOffset + addSize) {
-        memmove(buffer.data() + bufOffset, buffer.data(), bufLength);
+        memmove(buffer.data(), buffer.data() + bufOffset, bufLength);
         bufOffset = 0;
     }
     memcpy(buffer.data() + bufLength, ptr, addSize);
