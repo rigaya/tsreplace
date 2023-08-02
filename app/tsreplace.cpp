@@ -1001,7 +1001,6 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     }
 
     m_vidPIDReplace = 0x0100;
-    AddMessage(RGY_LOG_INFO, _T("Output vid pid: 0x%04x.\n"), m_vidPIDReplace);
 
     return RGY_ERR_NONE;
 }
@@ -1417,6 +1416,8 @@ RGY_ERR TSReplace::restruct() {
             AddMessage(RGY_LOG_DEBUG, _T("Found first PMT.\n"));
         }
     }
+    m_vidPIDReplace = service->vid.pid;
+    AddMessage(RGY_LOG_INFO, _T("Output vid pid: 0x%04x.\n"), m_vidPIDReplace);
 
     pat = nullptr;
     m_vidFirstTimestamp = TIMESTAMP_INVALID_VALUE;
