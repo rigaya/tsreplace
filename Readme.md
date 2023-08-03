@@ -11,23 +11,57 @@ Windows 10/11 (x86/x64)
 ### Linux
 Ubuntu 20.04/22.04 (x64) ほか
 
-## 使用方法
+## 基本的な使用方法
 まず、オリジナルのtsをエンコードします。出力ファイルはmp4,mkv,ts等、timstampを保持できる形式にします(raw ES不可)。のちに作る映像置き換えtsファイルのシークを円滑にするため、GOP長はデフォルトより短めのほうがよいと思います。
 
-```
-QSVEncC64.exe -i <入力tsファイル> [インタレ解除等他のオプション] --gop-len 60 -o <置き換え映像ファイル>
-```
+`QSVEncC64.exe -i <入力tsファイル> [インタレ解除等他のオプション] --gop-len 90 -o <置き換え映像ファイル>`
+
 
 次にtsreplaceを使って、エンコードした映像に置き換えたtsを作成します。
-```
-tsreplace.exe -i <入力tsファイル> -r <置き換え映像ファイル> -o <出力tsファイル>
-```
+
+`tsreplace.exe -i <入力tsファイル> -r <置き換え映像ファイル> -o <出力tsファイル>`
+
 
 また、下記のように、2段階に分けずエンコードしながら置き換えを行うこともできます。**この場合、Powershellを使用するとPowershell側のパイプ渡しの問題でうまく動作しないため、コマンドプロンプトをご利用ください。**
 
-```
-QSVEncC64.exe -i <入力tsファイル> [インタレ解除等他のオプション] --gop-len 60 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>
-```
+`QSVEncC64.exe -i <入力tsファイル> [インタレ解除等他のオプション] --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
+
+## 使用例
+
+### ハードウェアエンコード
+
+#### Intel QSV
+
+QSVを使用する場合、[QSVEncC](https://github.com/rigaya/QSVEnc)を使用します。
+
+- H.264 エンコード  
+  `QSVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c h264 --icq 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
+
+- HEVC エンコード  
+  `QSVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c hevc --icq 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
+
+#### NVENC
+
+NVENCを使用する場合、[NVEncC](https://github.com/rigaya/NVEnc)を使用します。
+
+- H.264 エンコード  
+  `NVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c h264 --qvbr 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
+
+- HEVC エンコード  
+  `NVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c hevc --qvbr 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
+
+### ソフトウェアエンコード
+
+ソフトウェアエンコードを使用する場合、ffmpegを用います。
+
+#### x264
+
+  `ffmpeg.exe -y -i <入力tsファイル> -copyts -start_at_zero -vf yadif -an -c:v libx264 -preset slow -crf 23 -g 90 -f mpegts - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
+
+#### x265
+
+  `ffmpeg.exe -y -i <入力tsファイル> -copyts -start_at_zero -vf yadif -an -c:v libx265 -preset medium -crf 23 -g 90 -f mpegts - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
+
 
 ## オプション
 
