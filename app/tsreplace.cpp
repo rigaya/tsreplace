@@ -1220,8 +1220,8 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const bool replaceToHEVC = m_video->getVidCodecID() == AV_CODEC_ID_HEVC;
     const bool addAud = m_addAud && !has_aud;
     const bool addHeader = m_addHeaders && isKey && !has_header;
-    const auto pts = av_rescale_q(avpkt->pts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
-    const auto dts = av_rescale_q(avpkt->dts, m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
+    const auto pts = av_rescale_q(avpkt->pts - m_video->getFirstKeyPts(), m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
+    const auto dts = av_rescale_q(avpkt->dts - m_video->getFirstKeyPts(), m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
 
     int add_aud_len = (addAud) ? ((replaceToHEVC) ? 7 : 6) : 0;
     const  uint8_t *header = nullptr;
