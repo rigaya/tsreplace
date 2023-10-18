@@ -819,13 +819,46 @@ std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> TSReplaceVide
     return { AVERROR_EOF, nullptr };
 }
 
-std::tuple<RGY_ERR, int64_t, int64_t> TSReplaceVideo::getFrontPktPtsDts() {
-    if (m_packets.empty()) {
+RGY_ERR TSReplaceVideo::fillPackets() {
+    {
         auto [err, pkt] = getSample();
         if (err != RGY_ERR_NONE) {
-            return { (err == AVERROR_EOF) ? RGY_ERR_MORE_DATA : RGY_ERR_UNKNOWN, AV_NOPTS_VALUE, AV_NOPTS_VALUE };
+            return (err == AVERROR_EOF) ? RGY_ERR_MORE_DATA : RGY_ERR_UNKNOWN;
         }
         m_packets.push_back(std::move(pkt));
+    }
+
+    auto prev_packet = m_packets.back().get();
+
+    //PAFFエンコードで2フレーム連続でフィールドがある場合、
+    //2フィールド目にpts/dtsが設定されていない場合がある
+    //その場合は、1フィールド目に2フィールド目のデータを連結する
+    if (m_Demux.video.stream->codecpar->codec_id == AV_CODEC_ID_H264
+        && (prev_packet->flags & RGY_FLAG_PICSTRUCT_FIELD) != 0
+        && (prev_packet->flags & (RGY_FLAG_PICSTRUCT_TFF | RGY_FLAG_PICSTRUCT_BFF)) != 0) { // インタレ保持
+        auto [err2, pkt2] = getSample();
+        if (err2 == 0) {
+            if (   (pkt2->flags & RGY_FLAG_PICSTRUCT_FIELD) != 0 // フィールド単位
+                && (pkt2->flags & (RGY_FLAG_PICSTRUCT_TFF | RGY_FLAG_PICSTRUCT_BFF)) != 0 // インタレ保持
+                && pkt2->pts == AV_NOPTS_VALUE
+                && pkt2->dts == AV_NOPTS_VALUE) {
+                const auto orig_pkt_size = prev_packet->size;
+                av_grow_packet(prev_packet, pkt2->size);
+                memcpy(prev_packet->data + orig_pkt_size, pkt2->data, pkt2->size);
+            } else {
+                m_packets.push_back(std::move(pkt2));
+            }
+        }
+    }
+    return RGY_ERR_NONE;
+}
+
+std::tuple<RGY_ERR, int64_t, int64_t> TSReplaceVideo::getFrontPktPtsDts() {
+    if (m_packets.empty()) {
+        auto err = fillPackets();
+        if (err != RGY_ERR_NONE) {
+            return { err, AV_NOPTS_VALUE, AV_NOPTS_VALUE };
+        }
     }
     auto& fronpkt = m_packets.front();
     return { RGY_ERR_NONE, fronpkt->pts, fronpkt->dts };
@@ -833,11 +866,10 @@ std::tuple<RGY_ERR, int64_t, int64_t> TSReplaceVideo::getFrontPktPtsDts() {
 
 std::tuple<RGY_ERR, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> TSReplaceVideo::getFrontPktAndPop() {
     if (m_packets.empty()) {
-        auto [err, pkt] = getSample();
+        auto err = fillPackets();
         if (err != RGY_ERR_NONE) {
-            return { (err == AVERROR_EOF) ? RGY_ERR_MORE_DATA : RGY_ERR_UNKNOWN, nullptr };
+            return { err, nullptr };
         }
-        return { RGY_ERR_NONE, std::move(pkt) };
     }
     auto pkt = std::move(m_packets.front());
     m_packets.pop_front();

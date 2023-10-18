@@ -132,6 +132,7 @@ public:
     AVCodecID getVidCodecID() const;
     AVRational getVidTimebase() const;
     int64_t getFirstKeyPts() const;
+    RGY_ERR fillPackets();
     std::tuple<RGY_ERR, int64_t, int64_t> getFrontPktPtsDts();
     std::tuple<RGY_ERR, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> getFrontPktAndPop();
 
