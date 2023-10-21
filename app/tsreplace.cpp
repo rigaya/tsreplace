@@ -838,10 +838,9 @@ RGY_ERR TSReplaceVideo::fillPackets() {
         && (prev_packet->flags & (RGY_FLAG_PICSTRUCT_TFF | RGY_FLAG_PICSTRUCT_BFF)) != 0) { // インタレ保持
         auto [err2, pkt2] = getSample();
         if (err2 == 0) {
-            if (   (pkt2->flags & RGY_FLAG_PICSTRUCT_FIELD) != 0 // フィールド単位
+            if (   (pkt2->flags & RGY_FLAG_PICSTRUCT_FIELD) != 0 // フィールド単位である
                 && (pkt2->flags & (RGY_FLAG_PICSTRUCT_TFF | RGY_FLAG_PICSTRUCT_BFF)) != 0 // インタレ保持
-                && pkt2->pts == AV_NOPTS_VALUE
-                && pkt2->dts == AV_NOPTS_VALUE) {
+                && (pkt2->pts == AV_NOPTS_VALUE || pkt2->dts == AV_NOPTS_VALUE)) {
                 const auto orig_pkt_size = prev_packet->size;
                 av_grow_packet(prev_packet, pkt2->size);
                 memcpy(prev_packet->data + orig_pkt_size, pkt2->data, pkt2->size);
