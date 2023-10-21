@@ -123,7 +123,7 @@ public:
     TSReplaceVideo(std::shared_ptr<RGYLog> log);
     virtual ~TSReplaceVideo();
     std::vector<int> getAVReaderStreamIndex(AVMediaType type);
-    RGY_ERR initAVReader(const tstring& videofile);
+    RGY_ERR initAVReader(const tstring& videofile, const tstring& inputFormat);
     std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> getSample();
     RGYTSStreamType getVideoStreamType() const;
 
@@ -184,6 +184,7 @@ protected:
 struct TSRReplaceParams {
     tstring input;
     tstring replacefile;
+    tstring replacefileformat;
     tstring output;
     TSRReplaceStartPoint startpoint;
     bool addAud;

@@ -119,6 +119,7 @@ void AVDemuxer::close() {
 TSRReplaceParams::TSRReplaceParams() :
     input(),
     replacefile(),
+    replacefileformat(),
     output(),
     startpoint(TSRReplaceStartPoint::KeyframPts),
     addAud(true),
@@ -388,7 +389,7 @@ RGYTSStreamType TSReplaceVideo::getVideoStreamType() const {
     return RGYTSStreamType::UNKNOWN;
 }
 
-RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile) {
+RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, const tstring& inputFormat) {
     if (!check_avcodec_dll()) {
         AddMessage(RGY_LOG_ERROR, error_mes_avcodec_dll_not_found());
         return RGY_ERR_NULL_PTR;
@@ -419,14 +420,12 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile) {
     }
 
     decltype(av_find_input_format(nullptr)) inFormat = nullptr;
-#if 0
-    if (input_prm->pInputFormat) {
-        if (nullptr == (inFormat = av_find_input_format(tchar_to_string(input_prm->pInputFormat).c_str()))) {
-            AddMessage(RGY_LOG_ERROR, _T("Unknown Input format: %s.\n"), input_prm->pInputFormat);
+    if (inputFormat.length() > 0) {
+        if (nullptr == (inFormat = av_find_input_format(tchar_to_string(inputFormat).c_str()))) {
+            AddMessage(RGY_LOG_ERROR, _T("Unknown Input format: %s.\n"), inputFormat.c_str());
             return RGY_ERR_INVALID_FORMAT;
         }
     }
-#endif
 
     //ts向けの設定
     bool scan_all_pmts_set = false;
@@ -932,7 +931,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
 
     AddMessage(RGY_LOG_INFO, _T("Output  file: \"%s\".\n"), prms.output.c_str());
     AddMessage(RGY_LOG_INFO, _T("Input   file: \"%s\".\n"), prms.input.c_str());
-    AddMessage(RGY_LOG_INFO, _T("Replace file: \"%s\".\n"), prms.replacefile.c_str());
+    AddMessage(RGY_LOG_INFO, _T("Replace file: \"%s\"%s.\n"), prms.replacefile.c_str(), (prms.replacefileformat.length() > 0) ? strsprintf(_T(" (%s)"), prms.replacefileformat.c_str()).c_str() : _T(""));
     AddMessage(RGY_LOG_INFO, _T("Start point : %s.\n"), get_cx_desc(list_startpoint, (int)prms.startpoint));
     AddMessage(RGY_LOG_INFO, _T("Add AUD     : %s.\n"), m_addAud ? _T("on") : _T("off"));
     AddMessage(RGY_LOG_INFO, _T("Add Headers : %s.\n"), m_addHeaders ? _T("on") : _T("off"));
@@ -992,7 +991,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_demuxer->init(log);
 
     m_video = std::make_unique<TSReplaceVideo>(log);
-    if (auto sts = m_video->initAVReader(prms.replacefile); sts != RGY_ERR_NONE) {
+    if (auto sts = m_video->initAVReader(prms.replacefile, prms.replacefileformat); sts != RGY_ERR_NONE) {
         return sts;
     }
 
@@ -1004,7 +1003,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
 
     {
         auto inputts = std::make_unique<TSReplaceVideo>(log);
-        auto sts = inputts->initAVReader(m_fileTS);
+        auto sts = inputts->initAVReader(m_fileTS, tstring());
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
@@ -1581,7 +1580,9 @@ static void show_help() {
         _T("  --(no-)add-aud                auto insert aud unit\n")
         _T("  --(no-)add-headers            auto insert headers\n")
         _T("\n")
-        _T("   --log-level <string>         set log level\n")
+        _T("  --replace-format <string>     set replace file format\n")
+        _T("\n")
+        _T("  --log-level <string>          set log level\n")
         _T("                                  debug, info(default), warn, error\n");
      
     _ftprintf(stdout, _T("%s\n"), str.c_str());
@@ -1699,6 +1700,11 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
     if (IS_OPTION("output")) {
         i++;
         prm.output = strInput[i];
+        return 0;
+    }
+    if (IS_OPTION("replace-format")) {
+        i++;
+        prm.replacefileformat = strInput[i];
         return 0;
     }
     if (IS_OPTION("start-point")) {
