@@ -2,7 +2,9 @@
 # tsreplace <!-- omit in toc -->
 by rigaya
 
-tsの映像部分のみの置き換えを行うツールです。音声含め、他のパケットはそのままコピーします。
+tsの映像部分のみの置き換えを行い、サイズの圧縮を図るツールです。音声含め、他のパケットはそのままコピーします。
+
+<img src="./tsreplace_concept.webp" width="800px">
 
 ## 目次 <!-- omit in toc -->
 - [想定動作環境](#想定動作環境)
