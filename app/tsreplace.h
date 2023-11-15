@@ -253,7 +253,7 @@ protected:
     std::unique_ptr<FILE, fp_deleter> m_fpTSOut; // 出力tsファイル
     std::vector<uint8_t> m_bufferTS; // 読み込みtsのファイルバッファ
     uint16_t m_vidPIDReplace;   // 出力tsの動画のPID上書き用
-    int64_t m_vidPTSOutMax;     // 動画フレームのPTS最大値(出力制御用)
+    int64_t m_vidDTSOutMax;     // 動画フレームのDTS最大値(出力制御用)
     int64_t m_vidPTS;           // 直前の動画フレームのPTS
     int64_t m_vidDTS;           // 直前の動画フレームのDTS
     int64_t m_vidFirstFramePTS; // 最初の動画フレームのPTS

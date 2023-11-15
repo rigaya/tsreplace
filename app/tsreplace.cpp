@@ -897,7 +897,7 @@ TSReplace::TSReplace() :
     m_fpTSOut(),
     m_bufferTS(),
     m_vidPIDReplace(0x0100),
-    m_vidPTSOutMax(TIMESTAMP_INVALID_VALUE),
+    m_vidDTSOutMax(TIMESTAMP_INVALID_VALUE),
     m_vidPTS(TIMESTAMP_INVALID_VALUE),
     m_vidDTS(TIMESTAMP_INVALID_VALUE),
     m_vidFirstFramePTS(TIMESTAMP_INVALID_VALUE),
@@ -1329,18 +1329,19 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
 }
 
 int64_t TSReplace::getOrigPtsOffset() {
-    if (m_vidPTS < m_vidPTSOutMax) {
-        if (m_vidPTSOutMax - m_vidPTS > WRAP_AROUND_CHECK_VALUE) {
-            AddMessage(RGY_LOG_INFO, _T("PTS wrap!\n"));
+    if (m_vidDTS < m_vidDTSOutMax) {
+        if (m_vidDTSOutMax - m_vidDTS > WRAP_AROUND_CHECK_VALUE) {
+            AddMessage(RGY_LOG_INFO, _T("PTS/DTS wrap!\n"));
             m_ptswrapOffset += WRAP_AROUND_VALUE;
-            m_vidPTSOutMax = m_vidPTS;
+            m_vidDTSOutMax = m_vidDTS;
         }
     } else {
-        if (m_vidPTS - m_vidPTSOutMax < WRAP_AROUND_CHECK_VALUE) {
-            m_vidPTSOutMax = m_vidPTS;
+        if (m_vidDTS - m_vidDTSOutMax < WRAP_AROUND_CHECK_VALUE) {
+            m_vidDTSOutMax = m_vidDTS;
         }
     }
-    auto offset = m_vidPTSOutMax + m_ptswrapOffset - m_vidFirstTimestamp;
+    // dtsベースで差分を計算するが、起点は最初のPTSとする
+    auto offset = m_vidDTSOutMax + m_ptswrapOffset - m_vidFirstTimestamp;
     return offset;
 }
 
@@ -1348,15 +1349,16 @@ RGY_ERR TSReplace::writeReplacedVideo() {
     if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
         return RGY_ERR_NONE;
     }
-    const auto ptsOrigOffset = getOrigPtsOffset();
+    const auto dtsOrigOffset = getOrigPtsOffset();
     for (;;) {
         auto [err, pts, dts] = m_video->getFrontPktPtsDts();
         if (err != RGY_ERR_NONE) {
             return err;
         }
-        const auto ptsVidOffset = av_rescale_q(pts - m_video->getFirstKeyPts(), m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE));
+        // dtsベースで差分を計算するが、起点は最初のPTSとする
+        const auto dtsVidOffset = av_rescale_q(dts - m_video->getFirstKeyPts(), m_video->getVidTimebase(), av_make_q(1, TS_TIMEBASE));
 
-        if (ptsOrigOffset < ptsVidOffset) {
+        if (dtsOrigOffset < dtsVidOffset) {
             break;
         }
         auto [err2, pkt] = m_video->getFrontPktAndPop();
@@ -1490,7 +1492,7 @@ RGY_ERR TSReplace::restruct() {
                     writeReplacedPMT(*pmtResult);
                     pmtResult.reset();
                     if (m_startPoint == TSRReplaceStartPoint::FirstPacket) {
-                        m_vidPTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
+                        m_vidDTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
                         if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
                             return err;
                         }
@@ -1535,7 +1537,7 @@ RGY_ERR TSReplace::restruct() {
                     if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
                         const auto startPoint = getStartPointPTS();
                         if (startPoint <= m_vidPTS) {
-                            m_vidPTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
+                            m_vidDTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
                         }
                     }
                 }
