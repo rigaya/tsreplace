@@ -36,6 +36,7 @@
 #include "rgy_util.h"
 #include "rgy_avlog.h"
 #include "rgy_bitstream.h"
+#include "rgy_filesystem.h"
 #include "tsreplace.h"
 
 static const int64_t WRAP_AROUND_VALUE = (1LL << 33);
@@ -1847,6 +1848,22 @@ int _tmain(const int argc, const TCHAR **argv) {
     }
     if (prm.output.size() == 0) {
         _ftprintf(stderr, _T("ERROR: output file not set.\n"));
+        return 1;
+    }
+    if (prm.output != _T("-")
+        && rgy_path_is_same(prm.input, prm.output)) {
+        _ftprintf(stderr, _T("ERROR: input and output file cannot be the same.\n"));
+        return 1;
+    }
+    if (prm.replacefile != _T("-")
+        && rgy_path_is_same(prm.input, prm.replacefile)) {
+        _ftprintf(stderr, _T("ERROR: input and replace file cannot be the same.\n"));
+        return 1;
+    }
+    if (   prm.replacefile != _T("-")
+        && prm.output != _T("-")
+        && rgy_path_is_same(prm.replacefile, prm.output)) {
+        _ftprintf(stderr, _T("ERROR: output and replace file cannot be the same.\n"));
         return 1;
     }
 
