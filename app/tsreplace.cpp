@@ -948,10 +948,10 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
             return RGY_ERR_FILE_OPEN;
         }
     } else {
-#if 1
-        AddMessage(RGY_LOG_ERROR, _T("stdin input not supported for -i, --input.\n"));
-        return RGY_ERR_UNSUPPORTED;
-#else
+        if (m_startPoint != TSRReplaceStartPoint::FirstFrame) {
+            AddMessage(RGY_LOG_ERROR, _T("stdin input supported only when start point is firstframe.\n"));
+            return RGY_ERR_UNSUPPORTED;
+        }
         AddMessage(RGY_LOG_DEBUG, _T("Open input file stdin.\n"));
         m_fpTSIn = std::unique_ptr<FILE, fp_deleter>(stdin, fp_deleter());
 #if defined(_WIN32) || defined(_WIN64)
@@ -960,7 +960,6 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
             return RGY_ERR_UNDEFINED_BEHAVIOR;
         }
 #endif //#if defined(_WIN32) || defined(_WIN64)
-#endif
     }
 
     if (_tcscmp(m_fileOut.c_str(), _T("-")) != 0) {
@@ -1002,7 +1001,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         return RGY_ERR_INVALID_CODEC;
     }
 
-    {
+    if (m_startPoint != TSRReplaceStartPoint::FirstFrame) {
         auto inputts = std::make_unique<TSReplaceVideo>(log);
         auto sts = inputts->initAVReader(m_fileTS, tstring());
         if (sts != RGY_ERR_NONE) {
@@ -1025,10 +1024,10 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         AddMessage(RGY_LOG_INFO, _T("%s First key    PTS: %11lld [%+7.1f ms] [%+7.1f ms]\n"),
             (prms.startpoint == TSRReplaceStartPoint::KeyframPts) ? _T("*") : _T(" "),
             m_vidFirstKeyPTS, (m_vidFirstKeyPTS - m_vidFirstPacketPTS) * 1000.0 / (double)TS_TIMEBASE, (m_vidFirstKeyPTS - m_vidFirstFramePTS) * 1000.0 / (double)TS_TIMEBASE);
-    }
-    if (getStartPointPTS() == TIMESTAMP_INVALID_VALUE) {
-        AddMessage(RGY_LOG_ERROR, _T("Failed to get first timestamp.\n"));
-        return RGY_ERR_UNKNOWN;
+        if (getStartPointPTS() == TIMESTAMP_INVALID_VALUE) {
+            AddMessage(RGY_LOG_ERROR, _T("Failed to get first timestamp.\n"));
+            return RGY_ERR_UNKNOWN;
+        }
     }
 
     m_vidPIDReplace = 0x0100;
@@ -1390,6 +1389,7 @@ RGY_ERR TSReplace::restruct() {
     int64_t m_pcr = TIMESTAMP_INVALID_VALUE;
     std::unique_ptr<RGYTSDemuxResult> pmtResult;
 
+    // まずPAT/PMTを読み込む
     while (!pat || !service) {
         if (tsPackets.empty() || !pat || !service) {
             auto err = readTS(tsPackets);
@@ -1397,60 +1397,85 @@ RGY_ERR TSReplace::restruct() {
                 return err;
             }
         }
-        //最初にPATを探す
-        if (!pat) {
-            do {
-                auto patpkt = std::find_if(tsPackets.begin(), tsPackets.end(), [](const uniqueRGYTSPacket& tspkt) {
-                    return tspkt->header.PID == 0x00; //PAT
-                    });
-                if (patpkt == tsPackets.end()) {
-                    break;
-                }
-                auto [err, ret] = m_demuxer->parse(patpkt->get());
-                if (err != RGY_ERR_NONE) {
-                    return err;
-                }
-                pat = m_demuxer->pat();
-            } while (!pat);
-            if (!pat) {
-                continue;
-            }
-            AddMessage(RGY_LOG_INFO, _T("Found first PAT.\n"));
-        }
 
-        // PMTを探す
-        if (!service) {
-            for (auto& tspkt : tsPackets) {
-                auto parsed_ret = m_demuxer->parse(tspkt.get());
-                auto err = std::get<0>(parsed_ret);
-                if (err != RGY_ERR_NONE) {
-                    return err;
-                }
-                switch (std::get<1>(parsed_ret).type) {
-                case RGYTSPacketType::PAT:
-                    pat = m_demuxer->pat();
-                    break;
-                case RGYTSPacketType::PMT:
-                    service = m_demuxer->service();
-                    if (service) {
-                        pmtResult = std::make_unique<RGYTSDemuxResult>(std::move(std::get<1>(parsed_ret)));
-                    }
-                    break;
-                default:
-                    break;
-                }
+        for (auto& tspkt : tsPackets) {
+            auto parsed_ret = m_demuxer->parse(tspkt.get());
+            const auto err = std::get<0>(parsed_ret);
+            if (err != RGY_ERR_NONE) {
+                return err;
+            }
+            const auto packet_type = std::get<1>(parsed_ret).type;
+            switch (packet_type) {
+            case RGYTSPacketType::PAT:
+                pat = m_demuxer->pat();
+                break;
+            case RGYTSPacketType::PMT:
+                service = m_demuxer->service();
                 if (service) {
-                    break;
+                    pmtResult = std::make_unique<RGYTSDemuxResult>(std::move(std::get<1>(parsed_ret)));
                 }
+                break;
             }
-            if (!service) {
-                continue;
-            }
-            AddMessage(RGY_LOG_DEBUG, _T("Found first PMT.\n"));
         }
     }
+
     m_vidPIDReplace = service->vid.pid;
     AddMessage(RGY_LOG_INFO, _T("Output vid pid: 0x%04x.\n"), m_vidPIDReplace);
+
+    m_demuxer->resetPCR();
+    m_demuxer->resetPSICache();
+
+    // 映像の先頭の時刻を検出
+    while (m_vidFirstFramePTS == TIMESTAMP_INVALID_VALUE) {
+        for (auto& tspkt : tsPackets) {
+            auto parsed_ret = m_demuxer->parse(tspkt.get());
+            const auto err = std::get<0>(parsed_ret);
+            if (err != RGY_ERR_NONE) {
+                return err;
+            }
+            const auto packet_type = std::get<1>(parsed_ret).type;
+            switch (packet_type) {
+            case RGYTSPacketType::PAT:
+                pat = m_demuxer->pat();
+                break;
+            case RGYTSPacketType::PMT:
+                service = m_demuxer->service();
+                if (service) {
+                    pmtResult = std::make_unique<RGYTSDemuxResult>(std::move(std::get<1>(parsed_ret)));
+                }
+                break;
+            case RGYTSPacketType::VID:
+                if (tspkt->header.PayloadStartFlag) {
+                    const auto pts = std::get<1>(parsed_ret).pts;
+                    const auto dts = std::get<1>(parsed_ret).dts;
+                    if (m_vidFirstFramePTS == TIMESTAMP_INVALID_VALUE) {
+                        m_vidFirstFramePTS = pts;
+                        AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstFramePTS);
+                    }
+                    if (m_vidFirstFrameDTS == TIMESTAMP_INVALID_VALUE) {
+                        m_vidFirstFrameDTS = dts;
+                        //AddMessage(RGY_LOG_DEBUG, _T("First Video DTS:     %11lld\n"), m_vidFirstFrameDTS);
+                    }
+                    if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
+                        const auto startPoint = getStartPointPTS();
+                        if (startPoint <= m_vidPTS) {
+                            m_vidDTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
+                        }
+                    }
+                }
+                break;
+            default:
+                break;
+            }
+        }
+        // まだ先頭の時刻が検出できていない場合は、次のパケットを読み込む
+        if (tsPackets.empty() || m_vidFirstFramePTS == TIMESTAMP_INVALID_VALUE) {
+            auto err = readTS(tsPackets);
+            if (err != RGY_ERR_NONE) {
+                return err;
+            }
+        }
+    }
 
     pat = nullptr;
     m_vidFirstTimestamp = TIMESTAMP_INVALID_VALUE;
