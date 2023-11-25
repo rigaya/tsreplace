@@ -30,8 +30,12 @@
 
 #include <memory>
 #include <deque>
+#include <thread>
+#include <mutex>
 #include "rgy_tsdemux.h"
 #include "rgy_avutil.h"
+#include "rgy_pipe.h"
+#include "rgy_queue.h"
 
 enum class TSRReplaceStartPoint {
     KeyframPts,
@@ -71,6 +75,8 @@ struct AVDemuxFormat {
     bool                      isPipe;                //入力がパイプ
     bool                      lowLatency;            //低遅延モード
     AVDictionary             *formatOptions;         //avformat_open_inputに渡すオプション
+
+    std::unique_ptr<void, RGYAVDeleter<void>> inputBuffer;           //入力バッファ
 
     AVDemuxFormat();
     ~AVDemuxFormat();
@@ -123,7 +129,7 @@ public:
     TSReplaceVideo(std::shared_ptr<RGYLog> log);
     virtual ~TSReplaceVideo();
     std::vector<int> getAVReaderStreamIndex(AVMediaType type);
-    RGY_ERR initAVReader(const tstring& videofile, const tstring& inputFormat);
+    RGY_ERR initAVReader(const tstring& videofile, RGYQueueBuffer *inputQueue, const tstring& inputFormat);
     std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> getSample();
     RGYTSStreamType getVideoStreamType() const;
 
@@ -138,6 +144,11 @@ public:
 
     RGY_ERR initDecoder();
     RGY_ERR getFirstPts(int64_t& firstPTSVideoAudioStreams, int64_t& firstPTSFrame, int64_t& firstPTSKeyFrame);
+
+    // custom io
+    int readPacket(uint8_t *buf, int buf_size);
+    int writePacket(uint8_t *buf, int buf_size);
+    int64_t seek(int64_t offset, int whence);
 protected:
     void SetExtraData(AVCodecParameters *codecParam, const uint8_t *data, uint32_t size);
     RGY_ERR GetHeader();
@@ -179,6 +190,7 @@ protected:
     std::deque<std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> m_packets;
     int64_t m_firstPTSFrame;              //最初のフレームのpts
     int64_t m_firstPTSVideoAudioStreams;  //全ストリームの最初のpts
+    RGYQueueBuffer *m_inputQueue;
 };
 
 struct TSRReplaceParams {
@@ -187,6 +199,8 @@ struct TSRReplaceParams {
     tstring replacefileformat;
     tstring output;
     TSRReplaceStartPoint startpoint;
+    tstring encoderPath;
+    std::vector<tstring> encoderArgs;
     bool addAud;
     bool addHeaders;
 
@@ -202,7 +216,10 @@ public:
 
     RGY_ERR init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prms);
     RGY_ERR restruct();
+    void close();
 protected:
+    RGY_ERR initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets);
+    RGY_ERR initEncoder();
     RGY_ERR readTS(std::vector<uniqueRGYTSPacket>& packetBuffer);
     RGY_ERR writePacket(const RGYTSPacket *pkt);
     RGY_ERR writeReplacedPMT(const RGYTSDemuxResult& result);
@@ -248,9 +265,17 @@ protected:
     int m_fileTSBufSize; // 読み込みtsのファイルバッファサイズ
     tstring m_fileTS;    // 入力tsファイル名
     tstring m_fileOut;   // 出力tsファイル名
+    tstring m_replaceFileFormat; // 置き換え用ファイルのフォーマット
+    tstring m_encoderPath; // エンコーダのパス
+    std::vector<tstring> m_encoderArgs; // エンコーダの引数
     std::unique_ptr<RGYTSPacketSplitter> m_tsPktSplitter; // ts読み込み時ののpacket分割用
     std::unique_ptr<FILE, fp_deleter> m_fpTSIn;  // 入力tsファイル
     std::unique_ptr<FILE, fp_deleter> m_fpTSOut; // 出力tsファイル
+    bool m_inputAbort; // 入力スレッドの終了要求
+    std::unique_ptr<std::thread> m_threadInputTS;
+    std::unique_ptr<std::thread> m_threadSendEncoder;
+    std::unique_ptr<RGYQueueBuffer> m_queueInputReplace; // tsreplaceの読み込み用
+    std::unique_ptr<RGYQueueBuffer> m_queueInputEncoder; // エンコーダの読み込み用
     std::vector<uint8_t> m_bufferTS; // 読み込みtsのファイルバッファ
     uint16_t m_vidPIDReplace;   // 出力tsの動画のPID上書き用
     int64_t m_vidDTSOutMax;     // 動画フレームのDTS最大値(出力制御用)
@@ -271,6 +296,12 @@ protected:
     bool m_addHeaders; // ヘッダの挿入
     decltype(parse_nal_unit_h264_c) *m_parseNalH264; // H.264用のnal unit分解関数へのポインタ
     decltype(parse_nal_unit_hevc_c) *m_parseNalHevc; // HEVC用のnal unit分解関数へのポインタ
+
+    std::unique_ptr<RGYPipeProcess> m_encoder;
+    ProcessPipe m_encPipe;
+    std::thread m_encThreadOut;
+    std::thread m_encThreadErr;
+    std::unique_ptr<RGYQueueBuffer> m_encQueueOut;
 };
 
 #endif //__TSREPLACE_H__

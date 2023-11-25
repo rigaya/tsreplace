@@ -44,12 +44,26 @@ static const int64_t WRAP_AROUND_CHECK_VALUE = ((1LL << 32) - 1);
 
 static_assert(TIMESTAMP_INVALID_VALUE == AV_NOPTS_VALUE);
 
+static int funcReadPacket(void *opaque, uint8_t *buf, int buf_size) {
+    TSReplaceVideo *reader = reinterpret_cast<TSReplaceVideo *>(opaque);
+    return reader->readPacket(buf, buf_size);
+}
+static int funcWritePacket(void *opaque, uint8_t *buf, int buf_size) {
+    TSReplaceVideo *reader = reinterpret_cast<TSReplaceVideo *>(opaque);
+    return reader->writePacket(buf, buf_size);
+}
+static int64_t funcSeek(void *opaque, int64_t offset, int whence) {
+    TSReplaceVideo *reader = reinterpret_cast<TSReplaceVideo *>(opaque);
+    return reader->seek(offset, whence);
+}
+
 AVDemuxFormat::AVDemuxFormat() :
     formatCtx(std::unique_ptr<AVFormatContext, decltype(&avformat_free_context)>(nullptr, avformat_free_context)),
     analyzeSec(0.0),
     isPipe(false),
     lowLatency(false),
-    formatOptions(nullptr) {
+    formatOptions(nullptr),
+    inputBuffer() {
 
 }
 
@@ -135,7 +149,8 @@ TSReplaceVideo::TSReplaceVideo(std::shared_ptr<RGYLog> log) :
     m_hevcMp42AnnexbBuffer(),
     m_packets(),
     m_firstPTSFrame(TIMESTAMP_INVALID_VALUE),
-    m_firstPTSVideoAudioStreams(TIMESTAMP_INVALID_VALUE) {
+    m_firstPTSVideoAudioStreams(TIMESTAMP_INVALID_VALUE),
+    m_inputQueue(nullptr) {
 
 }
 
@@ -390,7 +405,7 @@ RGYTSStreamType TSReplaceVideo::getVideoStreamType() const {
     return RGYTSStreamType::UNKNOWN;
 }
 
-RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, const tstring& inputFormat) {
+RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, RGYQueueBuffer *inputQueue, const tstring& inputFormat) {
     if (!check_avcodec_dll()) {
         AddMessage(RGY_LOG_ERROR, error_mes_avcodec_dll_not_found());
         return RGY_ERR_NULL_PTR;
@@ -402,22 +417,24 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, const tstring& in
     av_qsv_log_set(m_log);
 
     m_filename = videofile;
-
+    m_inputQueue = inputQueue;
     std::string filename_char;
-    if (0 == tchar_to_string(videofile.c_str(), filename_char, CP_UTF8)) {
-        AddMessage(RGY_LOG_ERROR, _T("failed to convert filename to utf-8 characters.\n"));
-        return RGY_ERR_UNSUPPORTED;
-    }
-
-    if (0 == strcmp(filename_char.c_str(), "-")) {
-#if defined(_WIN32) || defined(_WIN64)
-        if (_setmode(_fileno(stdin), _O_BINARY) < 0) {
-            AddMessage(RGY_LOG_ERROR, _T("failed to switch stdin to binary mode.\n"));
-            return RGY_ERR_UNDEFINED_BEHAVIOR;
+    if (videofile.length() > 0) {
+        if (0 == tchar_to_string(videofile.c_str(), filename_char, CP_UTF8)) {
+            AddMessage(RGY_LOG_ERROR, _T("failed to convert filename to utf-8 characters.\n"));
+            return RGY_ERR_UNSUPPORTED;
         }
+
+        if (0 == strcmp(filename_char.c_str(), "-")) {
+#if defined(_WIN32) || defined(_WIN64)
+            if (_setmode(_fileno(stdin), _O_BINARY) < 0) {
+                AddMessage(RGY_LOG_ERROR, _T("failed to switch stdin to binary mode.\n"));
+                return RGY_ERR_UNDEFINED_BEHAVIOR;
+            }
 #endif //#if defined(_WIN32) || defined(_WIN64)
-        AddMessage(RGY_LOG_DEBUG, _T("input source set to stdin.\n"));
-        filename_char = "pipe:0";
+            AddMessage(RGY_LOG_DEBUG, _T("input source set to stdin.\n"));
+            filename_char = "pipe:0";
+        }
     }
 
     decltype(av_find_input_format(nullptr)) inFormat = nullptr;
@@ -437,13 +454,25 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, const tstring& in
     //ファイルのオープン
     int ret = 0;
     AVFormatContext *format_ctx = avformat_alloc_context();
-    if ((ret = avformat_open_input(&format_ctx, filename_char.c_str(), inFormat, &m_Demux.format.formatOptions)) != 0) {
+    if (m_inputQueue) {
+        int bufferSize = 64 * 1024;
+        m_Demux.format.inputBuffer = std::unique_ptr<void, RGYAVDeleter<void>>(av_malloc(bufferSize), RGYAVDeleter<void>(av_free));
+        if (NULL == (format_ctx->pb = avio_alloc_context((unsigned char *)m_Demux.format.inputBuffer.get(), bufferSize, 0, this, &funcReadPacket, nullptr, nullptr))) {
+            AddMessage(RGY_LOG_ERROR, _T("failed to alloc avio context.\n"));
+            return RGY_ERR_NULL_PTR;
+        }
+    }
+    if ((ret = avformat_open_input(&format_ctx, m_inputQueue ? nullptr : filename_char.c_str(), inFormat, &m_Demux.format.formatOptions)) != 0) {
         AddMessage(RGY_LOG_ERROR, _T("error opening file \"%s\": %s\n"), char_to_tstring(filename_char, CP_UTF8).c_str(), qsv_av_err2str(ret).c_str());
         avformat_free_context(format_ctx);
         return RGY_ERR_FILE_OPEN; // Couldn't open file
     }
     m_Demux.format.formatCtx = std::unique_ptr<AVFormatContext, decltype(&avformat_free_context)>(format_ctx, avformat_free_context); format_ctx = nullptr;
-    AddMessage(RGY_LOG_DEBUG, _T("opened file \"%s\".\n"), char_to_tstring(filename_char, CP_UTF8).c_str());
+    if (m_inputQueue) {
+        AddMessage(RGY_LOG_DEBUG, _T("opened encode queue.\n"));
+    } else {
+        AddMessage(RGY_LOG_DEBUG, _T("opened file \"%s\".\n"), char_to_tstring(filename_char, CP_UTF8).c_str());
+    }
 
     //不正なオプションを渡していないかチェック
     for (const AVDictionaryEntry *t = NULL; NULL != (t = av_dict_get(m_Demux.format.formatOptions, "", t, AV_DICT_IGNORE_SUFFIX));) {
@@ -886,6 +915,17 @@ int64_t TSReplaceVideo::getFirstKeyPts() const {
     return m_Demux.video.streamFirstKeyPts;
 }
 
+int TSReplaceVideo::readPacket(uint8_t *buf, int buf_size) {
+    auto ret = m_inputQueue->popDataBlock(buf, buf_size);
+    return (ret < 0) ? AVERROR_EOF : (int)ret;
+}
+int TSReplaceVideo::writePacket(uint8_t *buf, int buf_size) {
+    return -1;
+}
+int64_t TSReplaceVideo::seek(int64_t offset, int whence) {
+    return -1;
+}
+
 TSReplace::TSReplace() :
     m_log(),
     m_demuxer(),
@@ -893,9 +933,16 @@ TSReplace::TSReplace() :
     m_fileTSBufSize(16 * 1024),
     m_fileTS(),
     m_fileOut(),
+    m_encoderPath(),
+    m_encoderArgs(),
     m_tsPktSplitter(),
     m_fpTSIn(),
     m_fpTSOut(),
+    m_inputAbort(false),
+    m_threadInputTS(),
+    m_threadSendEncoder(),
+    m_queueInputReplace(),
+    m_queueInputEncoder(),
     m_bufferTS(),
     m_vidPIDReplace(0x0100),
     m_vidDTSOutMax(TIMESTAMP_INVALID_VALUE),
@@ -919,7 +966,35 @@ TSReplace::TSReplace() :
 
 }
 TSReplace::~TSReplace() {
+    close();
+}
 
+void TSReplace::close() {
+    m_inputAbort = true;
+    if (m_encoder) {
+        m_encoder->close();
+    }
+    if (m_encThreadOut.joinable()) {
+        m_encThreadOut.join();
+    }
+    if (m_encThreadErr.joinable()) {
+        m_encThreadErr.join();
+    }
+    m_encQueueOut.reset();
+    if (m_threadSendEncoder) {
+        if (m_threadSendEncoder->joinable()) {
+            m_threadSendEncoder->join();
+        }
+        m_threadSendEncoder.reset();
+    }
+    m_queueInputEncoder.reset();
+    m_video.reset();
+    if (m_threadInputTS) {
+        if (m_threadInputTS->joinable()) {
+            m_threadInputTS->join();
+        }
+        m_threadInputTS.reset();
+    }
 }
 
 RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prms) {
@@ -932,7 +1007,16 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
 
     AddMessage(RGY_LOG_INFO, _T("Output  file: \"%s\".\n"), prms.output.c_str());
     AddMessage(RGY_LOG_INFO, _T("Input   file: \"%s\".\n"), prms.input.c_str());
-    AddMessage(RGY_LOG_INFO, _T("Replace file: \"%s\"%s.\n"), prms.replacefile.c_str(), (prms.replacefileformat.length() > 0) ? strsprintf(_T(" (%s)"), prms.replacefileformat.c_str()).c_str() : _T(""));
+    if (prms.replacefile.length() > 0) {
+        AddMessage(RGY_LOG_INFO, _T("Replace file: \"%s\"%s.\n"), prms.replacefile.c_str(), (prms.replacefileformat.length() > 0) ? strsprintf(_T(" (%s)"), prms.replacefileformat.c_str()).c_str() : _T(""));
+    } else {
+        AddMessage(RGY_LOG_INFO, _T("Encoder     : \"%s\"\n"), prms.encoderPath.c_str());
+        tstring str;
+        for (auto& arg : prms.encoderArgs) {
+            str += _T(" ") + arg;
+        }
+        AddMessage(RGY_LOG_INFO, _T("Encoder Args:%s\n"), str.c_str());
+    }
     AddMessage(RGY_LOG_INFO, _T("Start point : %s.\n"), get_cx_desc(list_startpoint, (int)prms.startpoint));
     AddMessage(RGY_LOG_INFO, _T("Add AUD     : %s.\n"), m_addAud ? _T("on") : _T("off"));
     AddMessage(RGY_LOG_INFO, _T("Add Headers : %s.\n"), m_addHeaders ? _T("on") : _T("off"));
@@ -942,7 +1026,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         FILE *fptmp = nullptr;
         if (_tfopen_s(&fptmp, m_fileTS.c_str(), _T("rb")) == 0 && fptmp != nullptr) {
             m_fpTSIn = std::unique_ptr<FILE, fp_deleter>(fptmp, fp_deleter());
-            m_fileTSBufSize = 4 * 1024 * 1024;
+            m_fileTSBufSize = 1 * 1024 * 1024;
         } else {
             AddMessage(RGY_LOG_ERROR, _T("Failed to open input file \"%s\".\n"), m_fileTS.c_str());
             return RGY_ERR_FILE_OPEN;
@@ -990,20 +1074,26 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_demuxer = std::make_unique<RGYTSDemuxer>();
     m_demuxer->init(log);
 
-    m_video = std::make_unique<TSReplaceVideo>(log);
-    if (auto sts = m_video->initAVReader(prms.replacefile, prms.replacefileformat); sts != RGY_ERR_NONE) {
-        return sts;
-    }
+    m_replaceFileFormat = prms.replacefileformat;
+    if (prms.replacefile.length() > 0) {
+        m_video = std::make_unique<TSReplaceVideo>(log);
+        if (auto sts = m_video->initAVReader(prms.replacefile, nullptr, prms.replacefileformat); sts != RGY_ERR_NONE) {
+            return sts;
+        }
 
-    const auto streamID = m_video->getVideoStreamType();
-    if (streamID == RGYTSStreamType::UNKNOWN) {
-        AddMessage(RGY_LOG_ERROR, _T("Unsupported codec %s.\n"), char_to_tstring(avcodec_get_name(m_video->getVidCodecID())).c_str());
-        return RGY_ERR_INVALID_CODEC;
+        const auto streamID = m_video->getVideoStreamType();
+        if (streamID == RGYTSStreamType::UNKNOWN) {
+            AddMessage(RGY_LOG_ERROR, _T("Unsupported codec %s.\n"), char_to_tstring(avcodec_get_name(m_video->getVidCodecID())).c_str());
+            return RGY_ERR_INVALID_CODEC;
+        }
+    } else {
+        m_encoderPath = prms.encoderPath;
+        m_encoderArgs = prms.encoderArgs;
     }
 
     if (m_startPoint != TSRReplaceStartPoint::FirstFrame) {
         auto inputts = std::make_unique<TSReplaceVideo>(log);
-        auto sts = inputts->initAVReader(m_fileTS, tstring());
+        auto sts = inputts->initAVReader(m_fileTS, nullptr, tstring());
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
@@ -1036,6 +1126,61 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
 }
 
 RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
+    if ((m_encoder || m_encoderPath.length() > 0) && !m_queueInputEncoder) {
+        m_queueInputEncoder = std::make_unique<RGYQueueBuffer>();
+        m_queueInputEncoder->init(4 * 1024 * 1024);
+        m_queueInputEncoder->setMaxCapacity(4 * 1024 * 1024);
+    }
+    if (!m_queueInputReplace) {
+        m_queueInputReplace = std::make_unique<RGYQueueBuffer>();
+        m_queueInputReplace->init(4 * 1024 * 1024);
+        m_queueInputReplace->setMaxCapacity(4 * 1024 * 1024);
+    }
+    // 実際に読み込みを行うスレッドを起動
+    if (!m_threadInputTS) {
+        m_threadInputTS = std::make_unique<std::thread>([&]() {
+            std::vector<uint8_t> readBuffer(m_fileTSBufSize);
+            size_t bytes_read = 0;
+            while (!m_inputAbort && (bytes_read = _fread_nolock(readBuffer.data(), 1, readBuffer.size(), m_fpTSIn.get())) != 0) {
+                if (m_queueInputEncoder && m_queueInputReplace) { // 両方に転送する場合
+                    int sentToEncoder = 0;
+                    int sentToReplace = 0;
+                    while (!sentToEncoder || !sentToReplace) {
+                        const int timeout = 0;
+                        if (!sentToEncoder) {
+                            sentToEncoder = m_queueInputEncoder->pushData(readBuffer.data(), bytes_read, timeout) ? 1 : 0;
+                        }
+                        if (!sentToReplace) {
+                            sentToReplace = m_queueInputReplace->pushData(readBuffer.data(), bytes_read, timeout) ? 1 : 0;
+                        }
+                        // 片方にだけ転送できた場合は、もう片方のサイズを拡張する
+                        if (sentToEncoder + sentToReplace == 1) {
+                            if (!sentToEncoder && m_queueInputEncoder->getMaxCapacity() < 32 * 1024 * 1024) {
+                                m_queueInputEncoder->setMaxCapacity(m_queueInputEncoder->getMaxCapacity() * 2);
+                            }
+                            if (!sentToReplace && m_queueInputReplace->getMaxCapacity() < 32 * 1024 * 1024) {
+                                m_queueInputReplace->setMaxCapacity(m_queueInputReplace->getMaxCapacity() * 2);
+                            }
+                        }
+                    }
+                } else { // 片方にしか転送しない場合
+                    const int timeout = 1000;
+                    bool finish = false;
+                    while (!finish && !m_inputAbort) {
+                        if (m_queueInputEncoder) {
+                            finish = m_queueInputEncoder->pushData(readBuffer.data(), bytes_read, timeout);
+                        }
+                        if (m_queueInputReplace) {
+                            finish = m_queueInputReplace->pushData(readBuffer.data(), bytes_read, timeout);
+                        }
+                    }
+                }
+            }
+            if (m_queueInputEncoder) m_queueInputEncoder->setEOF();
+            if (m_queueInputReplace) m_queueInputReplace->setEOF();
+        });
+    }
+
     m_bufferTS.resize(m_fileTSBufSize);
 
     auto now = std::chrono::system_clock::now();
@@ -1044,8 +1189,11 @@ RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
         fflush(stderr); //リダイレクトした場合でもすぐ読み取れるようflush
         m_tsReadUpdate = now;
     }
-    size_t bytes_read = 0;
-    while ((bytes_read = fread(m_bufferTS.data(), 1, m_bufferTS.size(), m_fpTSIn.get())) != 0) {
+    int64_t bytes_read = 0;
+    while ((bytes_read = m_queueInputReplace->popDataBlock(m_bufferTS.data(), m_bufferTS.size())) >= 0) {
+        if (bytes_read == 0) {
+            continue;
+        }
         auto [ret, packets] = m_tsPktSplitter->split(m_bufferTS.data(), bytes_read);
         if (ret != RGY_ERR_NONE) {
             return ret;
@@ -1382,12 +1530,9 @@ int64_t TSReplace::getStartPointPTS() const {
     return TIMESTAMP_INVALID_VALUE;
 }
 
-RGY_ERR TSReplace::restruct() {
-    std::vector<uniqueRGYTSPacket> tsPackets;
+RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     const RGYTS_PAT *pat = nullptr;
     const RGYService *service = nullptr;
-    int64_t m_pcr = TIMESTAMP_INVALID_VALUE;
-    std::unique_ptr<RGYTSDemuxResult> pmtResult;
 
     // まずPAT/PMTを読み込む
     while (!pat || !service) {
@@ -1411,9 +1556,6 @@ RGY_ERR TSReplace::restruct() {
                 break;
             case RGYTSPacketType::PMT:
                 service = m_demuxer->service();
-                if (service) {
-                    pmtResult = std::make_unique<RGYTSDemuxResult>(std::move(std::get<1>(parsed_ret)));
-                }
                 break;
             }
         }
@@ -1440,9 +1582,6 @@ RGY_ERR TSReplace::restruct() {
                 break;
             case RGYTSPacketType::PMT:
                 service = m_demuxer->service();
-                if (service) {
-                    pmtResult = std::make_unique<RGYTSDemuxResult>(std::move(std::get<1>(parsed_ret)));
-                }
                 break;
             case RGYTSPacketType::VID:
                 if (tspkt->header.PayloadStartFlag) {
@@ -1481,6 +1620,120 @@ RGY_ERR TSReplace::restruct() {
     m_vidFirstTimestamp = TIMESTAMP_INVALID_VALUE;
     m_demuxer->resetPCR();
     m_demuxer->resetPSICache();
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR TSReplace::initEncoder() {
+    m_encoder = createRGYPipeProcess();
+    m_encPipe = ProcessPipe{};
+    m_encPipe.stdIn.mode = PIPE_MODE_ENABLE;
+    m_encPipe.stdOut.mode = PIPE_MODE_ENABLE;
+    m_encPipe.stdErr.mode = PIPE_MODE_ENABLE;
+
+    for (auto& arg : m_encoderArgs) {
+        arg = str_replace(arg, _T("%{input}"), _T("-"));
+        arg = str_replace(arg, _T("%{output}"), _T("-"));
+    }
+
+    std::vector<const TCHAR *> args;
+    args.push_back(m_encoderPath.c_str());
+    for (const auto& arg : m_encoderArgs) {
+        args.push_back(arg.c_str());
+    }
+    args.push_back(nullptr);
+    if (m_encoder->run(args, nullptr, &m_encPipe, 0, false, false)) {
+        AddMessage(RGY_LOG_ERROR, _T("Failed to run \"%s\".\n"), m_encoderPath.c_str());
+        return RGY_ERR_RUN_PROCESS;
+#if defined(_WIN32) || defined(_WIN64)
+    } else {
+        WaitForInputIdle(dynamic_cast<RGYPipeProcessWin *>(m_encoder.get())->getProcessInfo().hProcess, INFINITE);
+#endif
+    }
+
+    // エンコーダーに転送するスレッドを起動
+    m_threadSendEncoder = std::make_unique<std::thread>([&]() {
+        std::vector<uint8_t> readBuffer(1 * 1024 * 1024);
+        while (!m_inputAbort && m_encoder && m_encoder->processAlive()) {
+            auto bytes_read = m_queueInputEncoder->popDataBlock(readBuffer.data(), readBuffer.size());
+            if (bytes_read < 0) {
+                break;
+            }
+            size_t bytes_sent = _fwrite_nolock(readBuffer.data(), 1, bytes_read, m_encPipe.f_stdin);
+            fflush(m_encPipe.f_stdin);
+        }
+        fclose(m_encPipe.f_stdin);
+    });
+
+    m_encQueueOut = std::make_unique<RGYQueueBuffer>();
+
+    m_encThreadOut = std::thread([&]() {
+        std::vector<uint8_t> buffer;
+        while (m_encoder->processAlive()) {
+            m_encoder->getOneOut(buffer, &m_encPipe, 10);
+            if (buffer.size() > 0) {
+                m_encQueueOut->pushData(buffer.data(), buffer.size(), std::numeric_limits<int>::max());
+                buffer.clear();
+            }
+        }
+        m_encoder->getOneOut(buffer, &m_encPipe, 10);
+        if (buffer.size() > 0) {
+            m_encQueueOut->pushData(buffer.data(), buffer.size(), std::numeric_limits<int>::max());
+            buffer.clear();
+        }
+        m_encQueueOut->setEOF();
+    });
+
+    m_encThreadErr = std::thread([&]() {
+        std::vector<uint8_t> buffer;
+        while (m_encoder->processAlive()) {
+            m_encoder->getOneErr(buffer, &m_encPipe, 10);
+            if (buffer.size() > 0) {
+                auto str = std::string(buffer.data(), buffer.data() + buffer.size());
+                m_log->write(RGY_LOG_INFO, RGY_LOGT_APP, _T("%s"), char_to_tstring(str).c_str());
+                buffer.clear();
+            }
+        }
+        m_encoder->getOneErr(buffer, &m_encPipe, 10);
+        if (buffer.size() > 0) {
+            auto str = std::string(buffer.data(), buffer.data() + buffer.size());
+            m_log->write(RGY_LOG_INFO, RGY_LOGT_APP, _T("%s"), char_to_tstring(str).c_str());
+            buffer.clear();
+        }
+    });
+
+    m_video = std::make_unique<TSReplaceVideo>(m_log);
+    if (auto sts = m_video->initAVReader(_T(""), m_encQueueOut.get(), m_replaceFileFormat); sts != RGY_ERR_NONE) {
+        return sts;
+    }
+    const auto streamID = m_video->getVideoStreamType();
+    if (streamID == RGYTSStreamType::UNKNOWN) {
+        AddMessage(RGY_LOG_ERROR, _T("Unsupported codec %s.\n"), char_to_tstring(avcodec_get_name(m_video->getVidCodecID())).c_str());
+        return RGY_ERR_INVALID_CODEC;
+    }
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR TSReplace::restruct() {
+    std::vector<uniqueRGYTSPacket> tsPackets;
+
+    {
+        auto err = initDemuxer(tsPackets);
+        if (err != RGY_ERR_NONE) {
+            return err;
+        }
+    }
+
+    if (m_encoderPath.length() > 0) {
+        auto err = initEncoder();
+        if (err != RGY_ERR_NONE) {
+            return err;
+        }
+    }
+
+    const RGYTS_PAT *pat = nullptr;
+    const RGYService *service = nullptr;
+    int64_t m_pcr = TIMESTAMP_INVALID_VALUE;
+    std::unique_ptr<RGYTSDemuxResult> pmtResult;
 
     //本解析
     for (;;) {
@@ -1745,6 +1998,14 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
         }
         return 0;
     }
+    if (IS_OPTION("encoder")) {
+        i++;
+        prm.encoderPath = strInput[i++];
+        for (; i < argc; i++) {
+            prm.encoderArgs.push_back(strInput[i]);
+        }
+        return 0;
+    }
     if (IS_OPTION("add-aud")) {
         prm.addAud = true;
         return 0;
@@ -1797,10 +2058,7 @@ int _tmain(const int argc, const TCHAR **argv) {
             if (argv[i][1] == _T('-')) {
                 option_name = &argv[i][2];
             } else if (argv[i][2] == _T('\0')) {
-                if (nullptr == (option_name = cmd_short_opt_to_long(argv[i][1]))) {
-                    _ftprintf(stderr, _T("Unknown option: \"%s\""), argv[i]);
-                    return 1;
-                }
+                option_name = cmd_short_opt_to_long(argv[i][1]);
             }
         }
 
@@ -1867,9 +2125,13 @@ int _tmain(const int argc, const TCHAR **argv) {
         _ftprintf(stderr, _T("ERROR: input file not set.\n"));
         return 1;
     }
-    if (prm.replacefile.size() == 0) {
-        _ftprintf(stderr, _T("ERROR: video file not set.\n"));
+    if (prm.replacefile.size() == 0 && prm.encoderPath.size() == 0) {
+        _ftprintf(stderr, _T("ERROR: replace video file or encoder path not set.\n"));
         return 1;
+    }
+    if (prm.replacefile.size() > 0) {
+        prm.encoderPath.clear();
+        prm.encoderArgs.clear();
     }
     if (prm.output.size() == 0) {
         _ftprintf(stderr, _T("ERROR: output file not set.\n"));
