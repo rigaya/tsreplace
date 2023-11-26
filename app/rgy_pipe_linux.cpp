@@ -110,51 +110,41 @@ int RGYPipeProcessLinux::run(const std::vector<const TCHAR *>& args, const TCHAR
 void RGYPipeProcessLinux::close() {
 }
 
-void RGYPipeProcessLinux::getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) {
+void RGYPipeProcessLinux::getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes) {
     auto read_from_pipe = [&]() {
-        char buf[256 * 1024];
-        int ret = fread(buf, sizeof(buf[0]), _countof(buf), pipes->f_stdout);
-        outstr += ret;
+        char buf[512 * 1024];
+        int pipe_read = fread(buf, sizeof(buf[0]), _countof(buf), pipes->f_stdout);
+        if (pipe_read == 0) return -1;
+        buffer.insert(buffer.end(), read_buf, read_buf + pipe_read);
         return (int)ret;
-        };
+    };
 
-    auto start = std::chrono::system_clock::now();
-    while (processAlive()) {
-        read_from_pipe();
-        auto now = std::chrono::system_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() > timeout) {
-            break;
-        }
-    }
+    int ret = 0;
     for (;;) {
-        if (read_from_pipe() <= 0) {
+        ret = read_from_pipe();
+        if (ret != 0) {
             break;
         }
     }
-    return outstr;
+    return ret < 0 ? -1 : (int)buffer.size();
 }
-void RGYPipeProcessLinux::getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) {
+void RGYPipeProcessLinux::getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes) {
     auto read_from_pipe = [&]() {
         char buf[4096];
-        int ret = fread(buf, sizeof(buf[0]), _countof(buf), pipes->f_stderr);
-        outstr += ret;
+        int pipe_read = fread(buf, sizeof(buf[0]), _countof(buf), pipes->f_stderr);
+        if (pipe_read == 0) return -1;
+        buffer.insert(buffer.end(), read_buf, read_buf + pipe_read);
         return (int)ret;
-        };
+    };
 
-    auto start = std::chrono::system_clock::now();
-    while (processAlive()) {
-        read_from_pipe();
-        auto now = std::chrono::system_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() > timeout) {
-            break;
-        }
-    }
+    int ret = 0;
     for (;;) {
-        if (read_from_pipe() <= 0) {
+        ret = read_from_pipe();
+        if (ret != 0) {
             break;
         }
     }
-    return outstr;
+    return ret < 0 ? -1 : (int)buffer.size();
 }
 
 tstring RGYPipeProcessLinux::getOutput(ProcessPipe *pipes) {

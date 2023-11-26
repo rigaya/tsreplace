@@ -80,8 +80,8 @@ public:
     virtual void close() = 0;
     virtual bool processAlive() = 0;
     virtual std::string getOutput(ProcessPipe *pipes) = 0;
-    virtual int getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) = 0;
-    virtual int getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) = 0;
+    virtual int getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes) = 0;
+    virtual int getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes) = 0;
 protected:
     virtual int startPipes(ProcessPipe *pipes) = 0;
     PROCESS_HANDLE m_phandle;
@@ -98,8 +98,8 @@ public:
     virtual void close() override;
     virtual bool processAlive() override;
     virtual std::string getOutput(ProcessPipe *pipes) override;
-    virtual int getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) override;
-    virtual int getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) override;
+    virtual int getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes) override;
+    virtual int getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes) override;
     const PROCESS_INFORMATION& getProcessInfo();
 protected:
     virtual int startPipes(ProcessPipe *pipes) override;
@@ -116,8 +116,8 @@ public:
     virtual void close() override;
     virtual bool processAlive() override;
     virtual std::string getOutput(ProcessPipe *pipes) override;
-    virtual int getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) override;
-    virtual int getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) override;
+    virtual int getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes) override;
+    virtual int getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes) override;
 protected:
     virtual int startPipes(ProcessPipe *pipes) override;
 };

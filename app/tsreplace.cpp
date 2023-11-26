@@ -1679,13 +1679,13 @@ RGY_ERR TSReplace::initEncoder() {
 
     m_encThreadOut = std::thread([&]() {
         std::vector<uint8_t> buffer;
-        while (m_encoder->getOneOut(buffer, &m_encPipe, 10) >= 0) {
+        while (m_encoder->getOneOut(buffer, &m_encPipe) >= 0) {
             if (buffer.size() > 0) {
                 m_encQueueOut->pushData(buffer.data(), buffer.size(), std::numeric_limits<int>::max());
                 buffer.clear();
             }
         }
-        m_encoder->getOneOut(buffer, &m_encPipe, 10);
+        m_encoder->getOneOut(buffer, &m_encPipe);
         if (buffer.size() > 0) {
             m_encQueueOut->pushData(buffer.data(), buffer.size(), std::numeric_limits<int>::max());
             buffer.clear();
@@ -1696,14 +1696,14 @@ RGY_ERR TSReplace::initEncoder() {
 
     m_encThreadErr = std::thread([&]() {
         std::vector<uint8_t> buffer;
-        while (m_encoder->getOneErr(buffer, &m_encPipe, 10) >= 0) {
+        while (m_encoder->getOneErr(buffer, &m_encPipe) >= 0) {
             if (buffer.size() > 0) {
                 auto str = std::string(buffer.data(), buffer.data() + buffer.size());
                 m_log->write(RGY_LOG_INFO, RGY_LOGT_APP, _T("%s"), char_to_tstring(str).c_str());
                 buffer.clear();
             }
         }
-        m_encoder->getOneErr(buffer, &m_encPipe, 10);
+        m_encoder->getOneErr(buffer, &m_encPipe);
         if (buffer.size() > 0) {
             auto str = std::string(buffer.data(), buffer.data() + buffer.size());
             m_log->write(RGY_LOG_INFO, RGY_LOGT_APP, _T("%s"), char_to_tstring(str).c_str());

@@ -131,7 +131,7 @@ int RGYPipeProcessWin::run(const std::vector<const TCHAR *>& args, const TCHAR *
     return ret;
 }
 
-int RGYPipeProcessWin::getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) {
+int RGYPipeProcessWin::getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes) {
     auto read_from_pipe = [&]() {
         DWORD pipe_read = 0;
         //if (!PeekNamedPipe(pipes->stdOut.h_read, NULL, 0, NULL, &pipe_read, NULL))
@@ -154,7 +154,7 @@ int RGYPipeProcessWin::getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipe
     }
     return ret < 0 ? -1 : (int)buffer.size();
 }
-int RGYPipeProcessWin::getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) {
+int RGYPipeProcessWin::getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes) {
     auto read_from_pipe = [&]() {
         DWORD pipe_read = 0;
         //if (!PeekNamedPipe(pipes->stdErr.h_read, NULL, 0, NULL, &pipe_read, NULL))
