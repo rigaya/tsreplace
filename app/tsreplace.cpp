@@ -1143,24 +1143,22 @@ RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
             size_t bytes_read = 0;
             while (!m_inputAbort && (bytes_read = _fread_nolock(readBuffer.data(), 1, readBuffer.size(), m_fpTSIn.get())) != 0) {
                 if (m_queueInputEncoder && m_queueInputReplace) { // 両方に転送する場合
-                    int sentToEncoder = 0;
-                    int sentToReplace = 0;
+                    bool sentToEncoder = false;
+                    bool sentToReplace = false;
                     while (!sentToEncoder || !sentToReplace) {
                         const int timeout = 0;
                         if (!sentToEncoder) {
-                            sentToEncoder = m_queueInputEncoder->pushData(readBuffer.data(), bytes_read, timeout) ? 1 : 0;
+                            sentToEncoder = m_queueInputEncoder->pushData(readBuffer.data(), bytes_read, timeout);
                         }
                         if (!sentToReplace) {
-                            sentToReplace = m_queueInputReplace->pushData(readBuffer.data(), bytes_read, timeout) ? 1 : 0;
+                            sentToReplace = m_queueInputReplace->pushData(readBuffer.data(), bytes_read, timeout);
                         }
-                        // 片方にだけ転送できた場合は、もう片方のサイズを拡張する
-                        if (sentToEncoder + sentToReplace == 1) {
-                            if (!sentToEncoder && m_queueInputEncoder->getMaxCapacity() < 32 * 1024 * 1024) {
-                                m_queueInputEncoder->setMaxCapacity(m_queueInputEncoder->getMaxCapacity() * 2);
-                            }
-                            if (!sentToReplace && m_queueInputReplace->getMaxCapacity() < 32 * 1024 * 1024) {
-                                m_queueInputReplace->setMaxCapacity(m_queueInputReplace->getMaxCapacity() * 2);
-                            }
+                        // 片方にだけ転送できた場合で、かつ転送できたほうのサイズが0の場合は、もう片方のサイズを拡張する
+                        if (!sentToEncoder && sentToReplace && m_queueInputReplace->size() == 0) {
+                            m_queueInputEncoder->setMaxCapacity(m_queueInputEncoder->getMaxCapacity() * 2);
+                        }
+                        if (sentToEncoder && !sentToReplace && m_queueInputEncoder->size() == 0) {
+                            m_queueInputReplace->setMaxCapacity(m_queueInputReplace->getMaxCapacity() * 2);
                         }
                     }
                 } else { // 片方にしか転送しない場合
