@@ -131,42 +131,52 @@ int RGYPipeProcessWin::run(const std::vector<const TCHAR *>& args, const TCHAR *
     return ret;
 }
 
-void RGYPipeProcessWin::getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) {
+int RGYPipeProcessWin::getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) {
     auto read_from_pipe = [&]() {
         DWORD pipe_read = 0;
         //if (!PeekNamedPipe(pipes->stdOut.h_read, NULL, 0, NULL, &pipe_read, NULL))
         //    return -1;
         //if (pipe_read) {
             char read_buf[512 * 1024] = { 0 };
-            ReadFile(pipes->stdOut.h_read, read_buf, sizeof(read_buf), &pipe_read, NULL);
+            if (!ReadFile(pipes->stdOut.h_read, read_buf, sizeof(read_buf), &pipe_read, NULL)) {
+                return -1;
+            }
             buffer.insert(buffer.end(), read_buf, read_buf + pipe_read);
         //}
         return (int)pipe_read;
     };
+    int ret = 0;
     for (;;) {
-        if (read_from_pipe() > 0) {
+        ret = read_from_pipe();
+        if (ret != 0) {
             break;
         }
     }
+    return ret < 0 ? -1 : (int)buffer.size();
 }
-void RGYPipeProcessWin::getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) {
+int RGYPipeProcessWin::getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes, int timeout) {
     auto read_from_pipe = [&]() {
         DWORD pipe_read = 0;
         //if (!PeekNamedPipe(pipes->stdErr.h_read, NULL, 0, NULL, &pipe_read, NULL))
         //    return -1;
         //if (pipe_read) {
             char read_buf[64 * 1024] = { 0 };
-            ReadFile(pipes->stdErr.h_read, read_buf, sizeof(read_buf) - 1, &pipe_read, NULL);
+            if (!ReadFile(pipes->stdErr.h_read, read_buf, sizeof(read_buf) - 1, &pipe_read, NULL)) {
+                return -1;
+            }
             buffer.insert(buffer.end(), read_buf, read_buf + pipe_read);
         //}
         return (int)pipe_read;
     };
 
+    int ret = 0;
     for (;;) {
-        if (read_from_pipe() > 0) {
+        ret = read_from_pipe();
+        if (ret != 0) {
             break;
         }
     }
+    return ret < 0 ? -1 : (int)buffer.size();
 }
 
 std::string RGYPipeProcessWin::getOutput(ProcessPipe *pipes) {
