@@ -2053,6 +2053,9 @@ int _tmain(const int argc, const TCHAR **argv) {
     //log-levelの取得
     RGYParamLogLevel loglevel(RGY_LOG_INFO);
     for (int iarg = 1; iarg < argc - 1; iarg++) {
+        if (tstring(argv[iarg]) == _T("--encoder")) {
+            break;
+        }
         if (tstring(argv[iarg]) == _T("--log-level")) {
             parse_log_level_param(argv[iarg], argv[iarg + 1], loglevel);
             break;
@@ -2063,6 +2066,9 @@ int _tmain(const int argc, const TCHAR **argv) {
     for (int i = 1; i < argc; i++) {
         if (argv[i] == nullptr) {
             continue;
+        }
+        if (tstring(argv[i]) == _T("--encoder")) {
+            break;
         }
         const TCHAR *option_name = nullptr;
         if (argv[i][0] == _T('|')) {
