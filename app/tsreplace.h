@@ -272,11 +272,13 @@ protected:
     std::unique_ptr<FILE, fp_deleter> m_fpTSIn;  // 入力tsファイル
     std::unique_ptr<FILE, fp_deleter> m_fpTSOut; // 出力tsファイル
     bool m_inputAbort; // 入力スレッドの終了要求
-    std::unique_ptr<std::thread> m_threadInputTS;
-    std::unique_ptr<std::thread> m_threadSendEncoder;
+    std::unique_ptr<std::thread> m_threadInputTS; // オリジナルts読み込みスレッド
+    std::unique_ptr<std::thread> m_threadSendEncoder; // tsからエンコーダへの送信スレッド
     std::unique_ptr<RGYQueueBuffer> m_queueInputReplace; // tsreplaceの読み込み用
     std::unique_ptr<RGYQueueBuffer> m_queueInputEncoder; // エンコーダの読み込み用
+    std::unique_ptr<RGYQueueBuffer> m_queueInputPreAnalysis; // 事前解析読み込み用
     std::vector<uint8_t> m_bufferTS; // 読み込みtsのファイルバッファ
+    bool m_preAnalysisFin; // 事前解析の終了
     uint16_t m_vidPIDReplace;   // 出力tsの動画のPID上書き用
     int64_t m_vidDTSOutMax;     // 動画フレームのDTS最大値(出力制御用)
     int64_t m_vidPTS;           // 直前の動画フレームのPTS
@@ -288,7 +290,7 @@ protected:
     int64_t m_vidFirstTimestamp;       // 起点のtimestamp
     int64_t m_vidFirstPacketPTS;       // 最初のパケットのPTS
     std::vector<uint8_t> m_lastPmt; // 直前の出力PMTデータ
-    std::unique_ptr<TSReplaceVideo> m_video; // 置き換え対象の動画の読み込み用
+    std::unique_ptr<TSReplaceVideo> m_videoReplace; // 置き換え対象の動画の読み込み用
     uint8_t m_pmtCounter; // 出力PMTのカウンタ
     uint8_t m_vidCounter; // 出力映像のカウンタ
     int64_t m_ptswrapOffset; // PCR wrapの加算分
@@ -297,11 +299,11 @@ protected:
     decltype(parse_nal_unit_h264_c) *m_parseNalH264; // H.264用のnal unit分解関数へのポインタ
     decltype(parse_nal_unit_hevc_c) *m_parseNalHevc; // HEVC用のnal unit分解関数へのポインタ
 
-    std::unique_ptr<RGYPipeProcess> m_encoder;
-    ProcessPipe m_encPipe;
-    std::thread m_encThreadOut;
-    std::thread m_encThreadErr;
-    std::unique_ptr<RGYQueueBuffer> m_encQueueOut;
+    std::unique_ptr<RGYPipeProcess> m_encoder; // エンコーダプロセス
+    ProcessPipe m_encPipe;      // エンコーダのパイプ
+    std::thread m_encThreadOut; // エンコーダからの標準出力を読み取り m_videoReplace に転送するスレッド
+    std::thread m_encThreadErr; // エンコーダからの標準エラー出力を読み取るスレッド
+    std::unique_ptr<RGYQueueBuffer> m_encQueueOut; // エンコーダ → m_videoReplace への転送用
 };
 
 #endif //__TSREPLACE_H__
