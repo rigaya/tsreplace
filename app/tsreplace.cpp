@@ -1176,6 +1176,7 @@ RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
                     }
                 }
             }
+            AddMessage(RGY_LOG_DEBUG, _T("Reached input ts EOF.\n"));
             if (m_queueInputEncoder) m_queueInputEncoder->setEOF();
             if (m_queueInputReplace) m_queueInputReplace->setEOF();
         });
@@ -1641,6 +1642,13 @@ RGY_ERR TSReplace::initEncoder() {
         args.push_back(arg.c_str());
     }
     args.push_back(nullptr);
+
+    tstring optionstr;
+    for (const auto& arg : m_encoderArgs) {
+        optionstr += arg;
+        optionstr += _T(" ");
+    }
+    AddMessage(RGY_LOG_INFO, _T("Run encoder: %s %s.\n"), m_encoderPath.c_str(), optionstr.c_str());
     if (m_encoder->run(args, nullptr, &m_encPipe, 0, false, false)) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to run \"%s\".\n"), m_encoderPath.c_str());
         return RGY_ERR_RUN_PROCESS;
@@ -1658,9 +1666,14 @@ RGY_ERR TSReplace::initEncoder() {
             if (bytes_read < 0) {
                 break;
             }
-            size_t bytes_sent = _fwrite_nolock(readBuffer.data(), 1, bytes_read, m_encPipe.f_stdin);
+            const size_t bytes_sent = _fwrite_nolock(readBuffer.data(), 1, bytes_read, m_encPipe.f_stdin);
+            if (bytes_sent != bytes_read) {
+                AddMessage(RGY_LOG_ERROR, _T("Failed to send bitstream to encoder.\n"));
+                break;
+            }
             fflush(m_encPipe.f_stdin);
         }
+        AddMessage(RGY_LOG_DEBUG, _T("Reached encoder input EOF.\n"));
         fclose(m_encPipe.f_stdin);
     });
 
@@ -1679,6 +1692,7 @@ RGY_ERR TSReplace::initEncoder() {
             m_encQueueOut->pushData(buffer.data(), buffer.size(), std::numeric_limits<int>::max());
             buffer.clear();
         }
+        AddMessage(RGY_LOG_DEBUG, _T("Reached encoder stdout EOF.\n"));
         m_encQueueOut->setEOF();
     });
 
@@ -1697,6 +1711,7 @@ RGY_ERR TSReplace::initEncoder() {
             m_log->write(RGY_LOG_INFO, RGY_LOGT_APP, _T("%s"), char_to_tstring(str).c_str());
             buffer.clear();
         }
+        AddMessage(RGY_LOG_DEBUG, _T("Reached encoder stderr EOF.\n"));
     });
 
     m_video = std::make_unique<TSReplaceVideo>(m_log);
