@@ -408,7 +408,8 @@ rgy_avlog.cpp       rgy_avutil.cpp \
 rgy_bitstream.cpp   rgy_codepage.cpp    rgy_def.cpp \
 rgy_env.cpp         rgy_err.cpp         rgy_event.cpp \
 rgy_filesystem.cpp  rgy_log.cpp         rgy_memmem.cpp \
-rgy_pipe.cpp        rgy_simd.cpp        rgy_tsdemux.cpp \
+rgy_pipe.cpp        rgy_pipe_linux.cpp \
+rgy_simd.cpp        rgy_tsdemux.cpp \
 rgy_tsstruct.cpp    rgy_tsutil.cpp      rgy_util.cpp \
 rgy_version.cpp     tsreplace.cpp \
 "

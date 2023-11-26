@@ -110,13 +110,13 @@ int RGYPipeProcessLinux::run(const std::vector<const TCHAR *>& args, const TCHAR
 void RGYPipeProcessLinux::close() {
 }
 
-void RGYPipeProcessLinux::getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes) {
+int RGYPipeProcessLinux::getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes) {
     auto read_from_pipe = [&]() {
-        char buf[512 * 1024];
-        int pipe_read = fread(buf, sizeof(buf[0]), _countof(buf), pipes->f_stdout);
+        char read_buf[512 * 1024];
+        int pipe_read = fread(read_buf, sizeof(read_buf[0]), _countof(read_buf), pipes->f_stdout);
         if (pipe_read == 0) return -1;
         buffer.insert(buffer.end(), read_buf, read_buf + pipe_read);
-        return (int)ret;
+        return (int)pipe_read;
     };
 
     int ret = 0;
@@ -128,13 +128,13 @@ void RGYPipeProcessLinux::getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *p
     }
     return ret < 0 ? -1 : (int)buffer.size();
 }
-void RGYPipeProcessLinux::getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes) {
+int RGYPipeProcessLinux::getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes) {
     auto read_from_pipe = [&]() {
-        char buf[4096];
-        int pipe_read = fread(buf, sizeof(buf[0]), _countof(buf), pipes->f_stderr);
+        char read_buf[4096];
+        int pipe_read = fread(read_buf, sizeof(read_buf[0]), _countof(read_buf), pipes->f_stderr);
         if (pipe_read == 0) return -1;
         buffer.insert(buffer.end(), read_buf, read_buf + pipe_read);
-        return (int)ret;
+        return (int)pipe_read;
     };
 
     int ret = 0;
