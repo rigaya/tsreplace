@@ -455,9 +455,9 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, RGYQueueBuffer *i
     int ret = 0;
     AVFormatContext *format_ctx = avformat_alloc_context();
     if (m_inputQueue) {
-        int bufferSize = 64 * 1024;
-        m_Demux.format.inputBuffer = std::unique_ptr<void, RGYAVDeleter<void>>(av_malloc(bufferSize), RGYAVDeleter<void>(av_free));
-        if (NULL == (format_ctx->pb = avio_alloc_context((unsigned char *)m_Demux.format.inputBuffer.get(), bufferSize, 0, this, &funcReadPacket, nullptr, nullptr))) {
+        int bufferSize = 128 * 1024;
+        m_Demux.format.inputBuffer = (uint8_t *)av_malloc(bufferSize);
+        if (NULL == (format_ctx->pb = avio_alloc_context((unsigned char *)m_Demux.format.inputBuffer, bufferSize, 0, this, &funcReadPacket, nullptr, nullptr))) {
             AddMessage(RGY_LOG_ERROR, _T("failed to alloc avio context.\n"));
             return RGY_ERR_NULL_PTR;
         }

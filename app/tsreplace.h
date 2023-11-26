@@ -76,7 +76,7 @@ struct AVDemuxFormat {
     bool                      lowLatency;            //低遅延モード
     AVDictionary             *formatOptions;         //avformat_open_inputに渡すオプション
 
-    std::unique_ptr<void, RGYAVDeleter<void>> inputBuffer;           //入力バッファ
+    uint8_t                  *inputBuffer;           //入力バッファ
 
     AVDemuxFormat();
     ~AVDemuxFormat();
