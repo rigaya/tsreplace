@@ -1163,7 +1163,7 @@ RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
                             if (!queue.sent) {
                                 queue.queue->setMaxCapacity(queue.queue->getMaxCapacity() * 2);
                                 AddMessage(RGY_LOG_DEBUG, _T("Extend input queue (%s) capacity to %.1f MB.\n"),
-                                    (double)queue.queue->getMaxCapacity() * (1.0 / (1024.0 * 1024.0)));
+                                    queue.queueName, (double)queue.queue->getMaxCapacity() * (1.0 / (1024.0 * 1024.0)));
                             }
                         }
                     }
