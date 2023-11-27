@@ -64,27 +64,31 @@ typedef struct {
     PipeSet stdOut;
     PipeSet stdErr;
     FILE *f_stdin;
-    FILE *f_stdout;
-    FILE *f_stderr;
-    uint32_t buf_len;
-    char read_buf[QSV_PIPE_READ_BUF];
 } ProcessPipe;
 
 class RGYPipeProcess {
 public:
-    RGYPipeProcess() : m_phandle(0) { };
+    RGYPipeProcess() : m_phandle(0), m_pipe(){ };
     virtual ~RGYPipeProcess() { };
 
-    virtual void init() = 0;
-    virtual int run(const std::vector<const TCHAR *>& args, const TCHAR *exedir, ProcessPipe *pipes, uint32_t priority, bool hidden, bool minimized) = 0;
+    void init(PipeMode stdin_, PipeMode stdout_, PipeMode stderr_) {
+        m_pipe.stdIn.mode = stdin_;
+        m_pipe.stdOut.mode = stdout_;
+        m_pipe.stdErr.mode = stderr_;
+    };
+    virtual int run(const std::vector<const TCHAR *>& args, const TCHAR *exedir, uint32_t priority, bool hidden, bool minimized) = 0;
     virtual void close() = 0;
     virtual bool processAlive() = 0;
-    virtual std::string getOutput(ProcessPipe *pipes) = 0;
-    virtual int getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes) = 0;
-    virtual int getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes) = 0;
+    virtual std::string getOutput() = 0;
+    virtual int stdOutRead(std::vector<uint8_t>& buffer) = 0;
+    virtual int stdErrRead(std::vector<uint8_t>& buffer) = 0;
+    virtual size_t stdInWrite(const void *data, const size_t dataSize) = 0;
+    virtual int stdInFlush() = 0;
+    virtual int stdInClose() = 0;
 protected:
-    virtual int startPipes(ProcessPipe *pipes) = 0;
+    virtual int startPipes() = 0;
     PROCESS_HANDLE m_phandle;
+    ProcessPipe m_pipe;
 };
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -93,16 +97,18 @@ public:
     RGYPipeProcessWin();
     virtual ~RGYPipeProcessWin();
 
-    virtual void init() override;
-    virtual int run(const std::vector<const TCHAR *>& args, const TCHAR *exedir, ProcessPipe *pipes, uint32_t priority, bool hidden, bool minimized) override;
+    virtual int run(const std::vector<const TCHAR *>& args, const TCHAR *exedir, uint32_t priority, bool hidden, bool minimized) override;
     virtual void close() override;
     virtual bool processAlive() override;
-    virtual std::string getOutput(ProcessPipe *pipes) override;
-    virtual int getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes) override;
-    virtual int getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes) override;
+    virtual std::string getOutput() override;
+    virtual int stdOutRead(std::vector<uint8_t>& buffer) override;
+    virtual int stdErrRead(std::vector<uint8_t>& buffer) override;
+    virtual size_t stdInWrite(const void *data, const size_t dataSize) override;
+    virtual int stdInFlush() override;
+    virtual int stdInClose() override;
     const PROCESS_INFORMATION& getProcessInfo();
 protected:
-    virtual int startPipes(ProcessPipe *pipes) override;
+    virtual int startPipes() override;
     PROCESS_INFORMATION m_pi;
 };
 #else
@@ -111,15 +117,17 @@ public:
     RGYPipeProcessLinux();
     virtual ~RGYPipeProcessLinux();
 
-    virtual void init() override;
-    virtual int run(const std::vector<const TCHAR *>& args, const TCHAR *exedir, ProcessPipe *pipes, uint32_t priority, bool hidden, bool minimized) override;
+    virtual int run(const std::vector<const TCHAR *>& args, const TCHAR *exedir, uint32_t priority, bool hidden, bool minimized) override;
     virtual void close() override;
     virtual bool processAlive() override;
-    virtual std::string getOutput(ProcessPipe *pipes) override;
-    virtual int getOneOut(std::vector<uint8_t>& buffer, ProcessPipe *pipes) override;
-    virtual int getOneErr(std::vector<uint8_t>& buffer, ProcessPipe *pipes) override;
+    virtual std::string getOutput() override;
+    virtual int stdOutRead(std::vector<uint8_t>& buffer) override;
+    virtual int stdErrRead(std::vector<uint8_t>& buffer) override;
+    virtual size_t stdInWrite(const void *data, const size_t dataSize) override;
+    virtual int stdInFlush() override;
+    virtual int stdInClose() override;
 protected:
-    virtual int startPipes(ProcessPipe *pipes) override;
+    virtual int startPipes() override;
 };
 #endif //#if defined(_WIN32) || defined(_WIN64)
 

@@ -1,4 +1,4 @@
-﻿// -----------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 // tsreplace by rigaya
 // -----------------------------------------------------------------------------------------
 // The MIT License
@@ -966,7 +966,6 @@ TSReplace::TSReplace() :
     m_parseNalH264(get_parse_nal_unit_h264_func()),
     m_parseNalHevc(get_parse_nal_unit_hevc_func()),
     m_encoder(),
-    m_encPipe(),
     m_encThreadOut(),
     m_encThreadErr(),
     m_encQueueOut() {
@@ -1105,18 +1104,21 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
 RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
     if ((m_encoder || m_encoderPath.length() > 0) && !m_queueInputEncoder) {
         m_queueInputEncoder = std::make_unique<RGYQueueBuffer>();
-        m_queueInputEncoder->init(4 * 1024 * 1024);
-        m_queueInputEncoder->setMaxCapacity(4 * 1024 * 1024);
+        m_queueInputEncoder->init(m_fileTSBufSize);
+        m_queueInputEncoder->setMaxCapacity(m_fileTSBufSize);
+        AddMessage(RGY_LOG_DEBUG, _T("Create queue for input (encoder).\n"));
     }
     if (!m_queueInputReplace) {
         m_queueInputReplace = std::make_unique<RGYQueueBuffer>();
-        m_queueInputReplace->init(4 * 1024 * 1024);
-        m_queueInputReplace->setMaxCapacity(4 * 1024 * 1024);
+        m_queueInputReplace->init(m_fileTSBufSize);
+        m_queueInputReplace->setMaxCapacity(m_fileTSBufSize);
+        AddMessage(RGY_LOG_DEBUG, _T("Create queue for input (replace).\n"));
     }
     if (!m_queueInputPreAnalysis && !m_preAnalysisFin) {
         m_queueInputPreAnalysis = std::make_unique<RGYQueueBuffer>();
-        m_queueInputPreAnalysis->init(4 * 1024 * 1024);
-        m_queueInputPreAnalysis->setMaxCapacity(4 * 1024 * 1024);
+        m_queueInputPreAnalysis->init(m_fileTSBufSize);
+        m_queueInputPreAnalysis->setMaxCapacity(m_fileTSBufSize);
+        AddMessage(RGY_LOG_DEBUG, _T("Create queue for input (preanalysis).\n"));
     }
     // 実際に読み込みを行うスレッドを起動
     if (!m_threadInputTS) {
@@ -1124,31 +1126,44 @@ RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
             std::vector<uint8_t> readBuffer(m_fileTSBufSize);
             size_t bytes_read = 0;
             while (!m_inputAbort && (bytes_read = _fread_nolock(readBuffer.data(), 1, readBuffer.size(), m_fpTSIn.get())) != 0) {
+                // 事前解析が終わったらキューを破棄してこれ以上転送しないようにする
                 if (m_queueInputPreAnalysis && m_preAnalysisFin) {
                     m_queueInputPreAnalysis.reset();
+                    AddMessage(RGY_LOG_DEBUG, _T("Queue for input (preanalysis) deleted.\n"));
                 }
 
-                // キューのリストを作成する
-                std::vector<std::pair<bool, RGYQueueBuffer*>> queues;
-                if (m_queueInputEncoder)     queues.push_back({ false, m_queueInputEncoder.get() });
-                if (m_queueInputReplace)     queues.push_back({ false, m_queueInputReplace.get() });
-                if (m_queueInputPreAnalysis) queues.push_back({ false, m_queueInputPreAnalysis.get() });
+                struct QueueInfo {
+                    bool sent;
+                    RGYQueueBuffer *queue;
+                    const TCHAR *queueName;
+                };
 
-                size_t queueSent = 0;
-                while (queueSent < queues.size()) {
+                // キューのリストを作成する
+                // キューの構成は途中で変化しうるので、毎回作成する
+                std::vector<QueueInfo> queues;
+                if (m_queueInputEncoder)     queues.push_back({ false, m_queueInputEncoder.get(),     _T("encoder")     });
+                if (m_queueInputReplace)     queues.push_back({ false, m_queueInputReplace.get(),     _T("replace")     });
+                if (m_queueInputPreAnalysis) queues.push_back({ false, m_queueInputPreAnalysis.get(), _T("preanalysis") });
+
+                // すべてのキューに対してデータを送信できるまでループ
+                for (size_t queueSent = 0; queueSent < queues.size(); ) {
                     bool emptyQueueExists = false;
                     for (auto& queue : queues) {
-                        if (queue.first) {
-                            emptyQueueExists |= queue.second->size() == 0;
+                        if (queue.sent) {
+                            emptyQueueExists |= queue.queue->size() == 0;
                             continue;
                         }
-                        queue.first = queue.second->pushData(readBuffer.data(), bytes_read, 0);
-                        queueSent += queue.first ? 1 : 0;
+                        queue.sent = queue.queue->pushData(readBuffer.data(), bytes_read, 0);
+                        queueSent += queue.sent ? 1 : 0;
                     }
+                    // 転送が完了したが空いているキューがあるのに、転送できていないデータがある場合、
+                    // 転送できていないキューの容量を2倍にして再度転送を試みる
                     if (emptyQueueExists) {
                         for (auto& queue : queues) {
-                            if (!queue.first) {
-                                queue.second->setMaxCapacity(m_queueInputEncoder->getMaxCapacity() * 2);
+                            if (!queue.sent) {
+                                queue.queue->setMaxCapacity(queue.queue->getMaxCapacity() * 2);
+                                AddMessage(RGY_LOG_DEBUG, _T("Extend input queue (%s) capacity to %.1f MB.\n"),
+                                    (double)queue.queue->getMaxCapacity() * (1.0 / (1024.0 * 1024.0)));
                             }
                         }
                     }
@@ -1513,6 +1528,7 @@ int64_t TSReplace::getStartPointPTS() const {
 RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     const RGYTS_PAT *pat = nullptr;
     const RGYService *service = nullptr;
+    AddMessage(RGY_LOG_DEBUG, _T("Start to get PAT/PMT.\n"));
 
     // まずPAT/PMTを読み込む
     while (!pat || !service) {
@@ -1540,11 +1556,17 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
             }
         }
     }
+    if (!pat || !service) {
+        AddMessage(RGY_LOG_DEBUG, _T("Failed to get PAT/PMT.\n"));
+        return RGY_ERR_INVALID_FORMAT;
+    }
+    AddMessage(RGY_LOG_DEBUG, _T("Got PAT/PMT.\n"));
 
     m_vidPIDReplace = service->vid.pid;
     AddMessage(RGY_LOG_INFO, _T("Output vid pid: 0x%04x.\n"), m_vidPIDReplace);
 
     // 映像の先頭の時刻を検出
+    AddMessage(RGY_LOG_DEBUG, _T("Start input ts preanalysis.\n"));
     auto originalTS = std::make_unique<TSReplaceVideo>(m_log);
     auto sts = originalTS->initAVReader(_T(""), m_queueInputPreAnalysis.get(), _T("mpegts"));
     if (sts != RGY_ERR_NONE) {
@@ -1581,15 +1603,7 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
 
 RGY_ERR TSReplace::initEncoder() {
     m_encoder = createRGYPipeProcess();
-    m_encPipe = ProcessPipe{};
-    m_encPipe.stdIn.mode = PIPE_MODE_ENABLE;
-    m_encPipe.stdOut.mode = PIPE_MODE_ENABLE;
-    m_encPipe.stdErr.mode = PIPE_MODE_ENABLE;
-
-    for (auto& arg : m_encoderArgs) {
-        arg = str_replace(arg, _T("%{input}"), _T("-"));
-        arg = str_replace(arg, _T("%{output}"), _T("-"));
-    }
+    m_encoder->init(PIPE_MODE_ENABLE, PIPE_MODE_ENABLE, PIPE_MODE_ENABLE);
 
     std::vector<const TCHAR *> args;
     args.push_back(m_encoderPath.c_str());
@@ -1604,7 +1618,7 @@ RGY_ERR TSReplace::initEncoder() {
         optionstr += _T(" ");
     }
     AddMessage(RGY_LOG_INFO, _T("Run encoder: %s %s.\n"), m_encoderPath.c_str(), optionstr.c_str());
-    if (m_encoder->run(args, nullptr, &m_encPipe, 0, false, false)) {
+    if (m_encoder->run(args, nullptr, 0, false, false)) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to run \"%s\".\n"), m_encoderPath.c_str());
         return RGY_ERR_RUN_PROCESS;
 #if defined(_WIN32) || defined(_WIN64)
@@ -1615,34 +1629,36 @@ RGY_ERR TSReplace::initEncoder() {
 
     // エンコーダーに転送するスレッドを起動
     m_threadSendEncoder = std::make_unique<std::thread>([&]() {
+        AddMessage(RGY_LOG_DEBUG, _T("Start thread to send input ts to encoder.\n"));
         std::vector<uint8_t> readBuffer(1 * 1024 * 1024);
         while (!m_inputAbort && m_encoder && m_encoder->processAlive()) {
             auto bytes_read = m_queueInputEncoder->popDataBlock(readBuffer.data(), readBuffer.size());
             if (bytes_read < 0) {
                 break;
             }
-            const size_t bytes_sent = _fwrite_nolock(readBuffer.data(), 1, bytes_read, m_encPipe.f_stdin);
+            const auto bytes_sent = (decltype(bytes_read))m_encoder->stdInWrite(readBuffer.data(), (size_t)bytes_read);
             if (bytes_sent != bytes_read) {
                 AddMessage(RGY_LOG_ERROR, _T("Failed to send bitstream to encoder.\n"));
                 break;
             }
-            fflush(m_encPipe.f_stdin);
+            m_encoder->stdInFlush();
         }
         AddMessage(RGY_LOG_DEBUG, _T("Reached encoder input EOF.\n"));
-        fclose(m_encPipe.f_stdin);
+        m_encoder->stdInClose();
     });
 
     m_encQueueOut = std::make_unique<RGYQueueBuffer>();
 
     m_encThreadOut = std::thread([&]() {
+        AddMessage(RGY_LOG_DEBUG, _T("Start thread to receive encoded data from encoder.\n"));
         std::vector<uint8_t> buffer;
-        while (m_encoder->getOneOut(buffer, &m_encPipe) >= 0) {
+        while (m_encoder->stdOutRead(buffer) >= 0) {
             if (buffer.size() > 0) {
                 m_encQueueOut->pushData(buffer.data(), buffer.size(), std::numeric_limits<int>::max());
                 buffer.clear();
             }
         }
-        m_encoder->getOneOut(buffer, &m_encPipe);
+        m_encoder->stdOutRead(buffer);
         if (buffer.size() > 0) {
             m_encQueueOut->pushData(buffer.data(), buffer.size(), std::numeric_limits<int>::max());
             buffer.clear();
@@ -1652,15 +1668,16 @@ RGY_ERR TSReplace::initEncoder() {
     });
 
     m_encThreadErr = std::thread([&]() {
+        AddMessage(RGY_LOG_DEBUG, _T("Start thread to receive messages from encoder.\n"));
         std::vector<uint8_t> buffer;
-        while (m_encoder->getOneErr(buffer, &m_encPipe) >= 0) {
+        while (m_encoder->stdErrRead(buffer) >= 0) {
             if (buffer.size() > 0) {
                 auto str = std::string(buffer.data(), buffer.data() + buffer.size());
                 m_log->write(RGY_LOG_INFO, RGY_LOGT_APP, _T("%s"), char_to_tstring(str).c_str());
                 buffer.clear();
             }
         }
-        m_encoder->getOneErr(buffer, &m_encPipe);
+        m_encoder->stdErrRead(buffer);
         if (buffer.size() > 0) {
             auto str = std::string(buffer.data(), buffer.data() + buffer.size());
             m_log->write(RGY_LOG_INFO, RGY_LOGT_APP, _T("%s"), char_to_tstring(str).c_str());
@@ -1669,6 +1686,7 @@ RGY_ERR TSReplace::initEncoder() {
         AddMessage(RGY_LOG_DEBUG, _T("Reached encoder stderr EOF.\n"));
     });
 
+    AddMessage(RGY_LOG_DEBUG, _T("Create demuxer to demux data from encoder.\n"));
     m_videoReplace = std::make_unique<TSReplaceVideo>(m_log);
     if (auto sts = m_videoReplace->initAVReader(_T(""), m_encQueueOut.get(), m_replaceFileFormat); sts != RGY_ERR_NONE) {
         return sts;
@@ -1678,6 +1696,7 @@ RGY_ERR TSReplace::initEncoder() {
         AddMessage(RGY_LOG_ERROR, _T("Unsupported codec %s.\n"), char_to_tstring(avcodec_get_name(m_videoReplace->getVidCodecID())).c_str());
         return RGY_ERR_INVALID_CODEC;
     }
+    AddMessage(RGY_LOG_DEBUG, _T("Encoder stream type: %d.\n"), streamID);
     return RGY_ERR_NONE;
 }
 

@@ -374,7 +374,7 @@ public:
         m_ptr(nullptr),
         m_size(0),
         m_capacity(0),
-        m_maxCapacity(4 * 1024 * 1024),
+        m_maxCapacity(1 * 1024 * 1024),
         m_offset(0),
         m_heEventPushed(nullptr),
         m_EOF(false),
@@ -383,6 +383,7 @@ public:
         m_heEventPushed = CreateEvent(NULL, TRUE, TRUE, NULL);
     }
     ~RGYQueueBuffer() {
+        close();
         if (m_heEventPoped) CloseEvent(m_heEventPoped);
         if (m_heEventPushed) CloseEvent(m_heEventPushed);
     }
@@ -398,7 +399,7 @@ public:
             m_ptr = nullptr;
         }
     }
-    void init(int64_t bufSize = 8 * 1024 * 1024) {
+    void init(int64_t bufSize = 1 * 1024 * 1024) {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_ptr = (uint8_t *)malloc(bufSize);
         m_capacity = bufSize;

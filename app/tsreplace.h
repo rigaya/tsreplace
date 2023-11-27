@@ -300,7 +300,6 @@ protected:
     decltype(parse_nal_unit_hevc_c) *m_parseNalHevc; // HEVC用のnal unit分解関数へのポインタ
 
     std::unique_ptr<RGYPipeProcess> m_encoder; // エンコーダプロセス
-    ProcessPipe m_encPipe;      // エンコーダのパイプ
     std::thread m_encThreadOut; // エンコーダからの標準出力を読み取り m_videoReplace に転送するスレッド
     std::thread m_encThreadErr; // エンコーダからの標準エラー出力を読み取るスレッド
     std::unique_ptr<RGYQueueBuffer> m_encQueueOut; // エンコーダ → m_videoReplace への転送用
