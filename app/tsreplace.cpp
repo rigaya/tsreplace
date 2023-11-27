@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------------------
+﻿// -----------------------------------------------------------------------------------------
 // tsreplace by rigaya
 // -----------------------------------------------------------------------------------------
 // The MIT License
@@ -1617,7 +1617,7 @@ RGY_ERR TSReplace::initEncoder() {
         optionstr += arg;
         optionstr += _T(" ");
     }
-    AddMessage(RGY_LOG_INFO, _T("Run encoder: %s %s.\n"), m_encoderPath.c_str(), optionstr.c_str());
+    AddMessage(RGY_LOG_INFO, _T("Run encoder: %s %s\n"), m_encoderPath.c_str(), optionstr.c_str());
     if (m_encoder->run(args, nullptr, 0, false, false)) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to run \"%s\".\n"), m_encoderPath.c_str());
         return RGY_ERR_RUN_PROCESS;
