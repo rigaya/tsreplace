@@ -2031,7 +2031,7 @@ int _tmain(const int argc, const TCHAR **argv) {
     //log-levelの取得
     RGYParamLogLevel loglevel(RGY_LOG_INFO);
     for (int iarg = 1; iarg < argc - 1; iarg++) {
-        if (tstring(argv[iarg]) == _T("--encoder")) {
+        if (tstring(argv[iarg]) == _T("--encoder")) { // --encoder以降はエンコーダのオプション
             break;
         }
         if (tstring(argv[iarg]) == _T("--log-level")) {
@@ -2045,7 +2045,7 @@ int _tmain(const int argc, const TCHAR **argv) {
         if (argv[i] == nullptr) {
             continue;
         }
-        if (tstring(argv[i]) == _T("--encoder")) {
+        if (tstring(argv[i]) == _T("--encoder")) { // --encoder以降はエンコーダのオプション
             break;
         }
         const TCHAR *option_name = nullptr;
@@ -2126,9 +2126,9 @@ int _tmain(const int argc, const TCHAR **argv) {
         _ftprintf(stderr, _T("ERROR: replace video file or encoder path not set.\n"));
         return 1;
     }
-    if (prm.replacefile.size() > 0) {
-        prm.encoderPath.clear();
-        prm.encoderArgs.clear();
+    if (prm.replacefile.size() > 0 && prm.encoderPath.size() > 0) {
+        _ftprintf(stderr, _T("ERROR: -r/--replace and --encoder cannot be used at the same time.\n"));
+        return 1;
     }
     if (prm.output.size() == 0) {
         _ftprintf(stderr, _T("ERROR: output file not set.\n"));
