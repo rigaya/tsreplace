@@ -2144,6 +2144,10 @@ int _tmain(const int argc, const TCHAR **argv) {
         _ftprintf(stderr, _T("ERROR: input and replace file cannot be the same.\n"));
         return 1;
     }
+    if (prm.input == _T("-") && prm.replacefile == _T("-")) {
+        _ftprintf(stderr, _T("ERROR: input and replace file cannot be the same (stdin).\n"));
+        return 1;
+    }
     if (   prm.replacefile != _T("-")
         && prm.output != _T("-")
         && rgy_path_is_same(prm.replacefile, prm.output)) {
