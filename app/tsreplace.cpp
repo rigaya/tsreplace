@@ -1217,7 +1217,7 @@ RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
 }
 
 RGY_ERR TSReplace::writePacket(const RGYTSPacket *pkt) {
-    if (fwrite(pkt->data(), 1, pkt->datasize(), m_fpTSOut.get()) != pkt->datasize()) {
+    if (_fwrite_nolock(pkt->data(), 1, pkt->datasize(), m_fpTSOut.get()) != pkt->datasize()) {
         return RGY_ERR_OUT_OF_RESOURCES;
     }
     return RGY_ERR_NONE;
