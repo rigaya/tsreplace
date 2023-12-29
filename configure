@@ -106,6 +106,7 @@ EXTRACXXFLAGS=""
 EXTRALDFLAGS=""
 SRCS=""
 X86_64=1
+ARM64=0
 NO_RDTSCP_INTRIN=0
 ENABLE_LTO=0
 
@@ -201,7 +202,6 @@ echo "PROGRAM=${PROGRAM}" >> ${CNF_LOG}
 echo "PREFIX=${PREFIX}" >> ${CNF_LOG}
 echo "EXTRACXXFLAGS=${EXTRACXXFLAGS}" >> ${CNF_LOG}
 echo "EXTRALDFLAGS=${EXTRALDFLAGS}" >> ${CNF_LOG}
-echo "OPENCL_HEADERS=${OPENCL_HEADERS}" >> ${CNF_LOG}
 echo "X86_64=${X86_64}" >> ${CNF_LOG}
 echo "ENABLE_CPP_REGEX=${ENABLE_CPP_REGEX}" >> ${CNF_LOG}
 echo "CHECK_LIBAV_NAMES=${CHECK_LIBAV_NAMES}" >> ${CNF_LOG}
@@ -227,7 +227,14 @@ if [ `echo | ${CXX} -E -dM - | egrep "WIN32|WIN64" | wc --lines` -ne 0 ]; then
     exit 1 
 fi
 
-if [ `echo | ${CXX} -E -dM - | grep "x86_64" | wc --lines` -eq 0 ]; then
+if [ `echo | ${CXX} -E -dM - | grep "__ARM_ARCH_ISA_A64" | wc --lines` -ne 0 ]; then
+    ARM64=1
+    X86_64=0
+elif [ `echo | ${CXX} -E -dM - | grep "x86_64" | wc --lines` -ne 0 ]; then
+    ARM64=0
+    X86_64=1
+else
+    ARM64=0
     X86_64=0
 fi
 
@@ -238,13 +245,13 @@ CXXFLAGS="-Wall -Wno-missing-braces -Wno-unknown-pragmas -Wno-unused \
 -I${SRCDIR} -I${SRCDIR}/app \
 "
 LDFLAGS="-L. -ldl -lm -lstdc++ -lstdc++fs"
-if [ $X86_64 -ne 0 ]; then
-    CFLAGS="${CFLAGS} -DLINUX64 -m64"
-    CXXFLAGS="${CXXFLAGS} -DLINUX64 -m64"
+if [ $ARM64 -ne 0 ]; then
+    CXXINC="${CXXINC} -DLINUX64"
+elif [ $X86_64 -ne 0 ]; then
+    CXXINC="${CXXINC} -DLINUX64 -m64"
     LDFLAGS="${LDFLAGS} -m64"
 else
-    CFLAGS="${CFLAGS} -DLINUX32 -m32"
-    CXXFLAGS="${CXXFLAGS} -DLINUX32 -m32"
+    CXXINC="${CXXINC} -DLINUX32 -m32"
     LDFLAGS="${LDFLAGS} -m32"
 fi
 
@@ -265,19 +272,13 @@ else
 fi
 cnf_write "OK"
 
-if cxx_check "-msse4.1" "${CXXFLAGS} -msse4.1 ${LDFLAGS}" ; then
-    CXXFLAGS="$CXXFLAGS -msse4.1"
-else
-    cnf_write "SSE4.1 not supported with this compiler." 
-    exit 1
-fi
-cnf_write "OK"
-
-if ! cxx_check "__rdtscp()" "${CXXFLAGS} ${LDFLAGS}" "" "x86intrin.h" "unsigned int a = 0; auto i = __rdtscp(&a);" ; then
-    CXXFLAGS="${CXXFLAGS} -DNO_RDTSCP_INTRIN=1"
-    cnf_write "no"
-else
-    cnf_write "yes"
+if [ $X86_64 -ne 0 ]; then
+    if ! cxx_check "__rdtscp()" "${CXXFLAGS} ${LDFLAGS}" "" "x86intrin.h" "unsigned int a = 0; auto i = __rdtscp(&a);" ; then
+        CXXFLAGS="${CXXFLAGS} -DNO_RDTSCP_INTRIN=1"
+        cnf_write "no"
+    else
+        cnf_write "yes"
+    fi
 fi
 
 if [ ! $ENABLE_DEBUG -eq 0 ]; then
