@@ -1,4 +1,4 @@
-﻿// -----------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 // QSVEnc/NVEnc by rigaya
 // -----------------------------------------------------------------------------------------
 // The MIT License
@@ -150,7 +150,7 @@ int RGYPipeProcessLinux::stdOutRead(std::vector<uint8_t>& buffer) {
     auto read_from_pipe = [&]() {
         char read_buf[512 * 1024];
         int pipe_read = (int)read(m_pipe.stdOut.h_read, read_buf, _countof(read_buf));
-        if (pipe_read == -1) return -1;
+        if (pipe_read <= 0) return -1;
         buffer.insert(buffer.end(), read_buf, read_buf + pipe_read);
         return (int)pipe_read;
     };
@@ -168,7 +168,7 @@ int RGYPipeProcessLinux::stdErrRead(std::vector<uint8_t>& buffer) {
     auto read_from_pipe = [&]() {
         char read_buf[4096];
         int pipe_read = (int)read(m_pipe.stdErr.h_read, read_buf, _countof(read_buf));
-        if (pipe_read == -1) return -1;
+        if (pipe_read <= 0) return -1;
         buffer.insert(buffer.end(), read_buf, read_buf + pipe_read);
         return (int)pipe_read;
     };
