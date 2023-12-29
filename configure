@@ -115,6 +115,7 @@ ENABLE_CPP_REGEX=1
 OPENCL_HEADERS=""
 
 CHECK_LIBAV_NAMES="libswresample libavutil libavcodec libavformat libavfilter"
+LIBAV_STATIC=0
 LIBAV_CFLAGS=""
 LIBAV_LIBS=""
 ENABLE_AVSW_READER=1
@@ -140,6 +141,8 @@ options:
   --pkg-config=PKGCONFIG   set pkg-config path [${PKGCONFIG}]
   --enable-debug           compile in debug configuration [${ENABLE_DEBUG}]
   --enable-lto             compile with lto [${ENABLE_LTO}]
+  
+  --libav-static           set --static for pkg-config at libav check
 
   --extra-cxxflags=XCFLAGS add XCFLAGS to CXXFLAGS
   --extra-ldflags=XLDFLAGS add XLDFLAGS to LDFLAGS
@@ -180,6 +183,9 @@ for opt; do
             ;;
         --enable-lto)
             ENABLE_LTO=1
+            ;;
+        --libav-static)
+            LIBAV_STATIC=1
             ;;
         --pkg-config=*)
             PKGCONFIG="$optarg"
@@ -344,14 +350,18 @@ if [ -n "$EXTRALDFLAGS" ]; then
 fi
 
 if [ $ENABLE_AVSW_READER -ne 0 ]; then
+    PKGCONFIG_LIBAV_STATIC=""
+    if [ $LIBAV_STATIC -ne 0 ]; then
+        PKGCONFIG_LIBAV_STATIC="--static"
+    fi
     if [ $USE_PKGCONFIG -ne 0 ]; then
         printf "checking libavcodec with pkg-config..."
         if ! ${PKGCONFIG} --exists $CHECK_LIBAV_NAMES ; then
             cnf_write "libs could not be detected by ${PKGCONFIG}. [ PKG_CONFIG_PATH=${PKG_CONFIG_PATH} ]"
         else
             cnf_write "OK"
-            LIBAV_LIBS=`${PKGCONFIG} --libs ${CHECK_LIBAV_NAMES}`
-            LIBAV_CFLAGS=`${PKGCONFIG} --cflags ${CHECK_LIBAV_NAMES}`
+            LIBAV_LIBS=`${PKGCONFIG} --libs ${PKGCONFIG_LIBAV_STATIC} ${CHECK_LIBAV_NAMES}`
+            LIBAV_CFLAGS=`${PKGCONFIG} --cflags ${PKGCONFIG_LIBAV_STATIC} ${CHECK_LIBAV_NAMES}`
         fi
     fi
     
