@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------------------
+﻿// -----------------------------------------------------------------------------------------
 // QSVEnc/NVEnc by rigaya
 // -----------------------------------------------------------------------------------------
 // The MIT License
@@ -143,7 +143,10 @@ int RGYPipeProcessLinux::stdInFlush() {
 }
 
 int RGYPipeProcessLinux::stdInClose() {
-    return fclose(m_pipe.f_stdin);
+    const int ret = fclose(m_pipe.f_stdin);
+    m_pipe.f_stdin = nullptr;
+    m_pipe.stdIn.h_write = 0;
+    return ret;
 }
 
 int RGYPipeProcessLinux::stdOutRead(std::vector<uint8_t>& buffer) {
