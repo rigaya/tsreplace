@@ -16,8 +16,16 @@ jobs:
         include:
           - dockerimg: ubuntu2004
             pkgtype: deb
+            platform: amd64
           - dockerimg: ubuntu2204
             pkgtype: deb
+            platform: amd64
+          - dockerimg: ubuntu2004
+            pkgtype: deb
+            platform: arm64
+          - dockerimg: ubuntu2204
+            pkgtype: deb
+            platform: arm64
 
     env:
       DOCKER_FILE:  docker/docker_${{ matrix.dockerimg }}
@@ -51,6 +59,10 @@ jobs:
           submodules: true
           fetch-depth: 0
 
+      - name: Set up QEMU
+        if: matrix.platform != 'amd64'
+        uses: docker/setup-qemu-action@v2
+
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v1
@@ -77,6 +89,7 @@ jobs:
           context: ./
           file: ${{ env.DOCKER_FILE }}
           builder: ${{ steps.buildx.outputs.name }}
+          platforms: linux/${{ matrix.platform }}
           push: false
           load: true
           tags: ${{ steps.prep.outputs.tagged_image }}
@@ -120,5 +133,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v2
         with:
-          name: tsreplace_${{ matrix.dockerimg }}_${{ matrix.pkgtype }}
+          name: tsreplace_${{ matrix.dockerimg }}_${{ matrix.pkgtype }}_${{ matrix.platform }}
           path: ${{ steps.build_exec.outputs.pkgfile }}
