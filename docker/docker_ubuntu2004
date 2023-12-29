@@ -21,8 +21,6 @@ RUN apt-get update \
       libswresample-dev \
       libavfilter7 \
       libavfilter-dev \
-      libavdevice58 \
-      libavdevice-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

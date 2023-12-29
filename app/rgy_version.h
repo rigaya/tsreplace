@@ -129,7 +129,7 @@ const char *get_app_version();
 #define ENABLE_SM_READER          1
 #define ENABLE_LIBASS_SUBBURN     0
 #define ENABLE_CUSTOM_VPP         1
-#define ENABLE_LIBAVDEVICE        1
+#define ENABLE_LIBAVDEVICE        0
 #ifndef ENABLE_METRIC_FRAMEWORK
 #if defined(_M_IX86)
 #define ENABLE_METRIC_FRAMEWORK   0
