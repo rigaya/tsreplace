@@ -979,30 +979,38 @@ void TSReplace::close() {
     m_inputAbort = true;
     //エンコーダの終了
     if (m_encoder) {
+        AddMessage(RGY_LOG_DEBUG, _T("Close Encoder.\n"));
         m_encoder->close();
     }
     if (m_encThreadOut.joinable()) {
+        AddMessage(RGY_LOG_DEBUG, _T("Finish thread for encoder stdout.\n"));
         m_encThreadOut.join();
     }
     if (m_encThreadErr.joinable()) {
+        AddMessage(RGY_LOG_DEBUG, _T("Finish thread for encoder stderr.\n"));
         m_encThreadErr.join();
     }
+    AddMessage(RGY_LOG_DEBUG, _T("Close encoder output queue.\n"));
     m_encQueueOut.reset();
 
     if (m_threadSendEncoder) {
+        AddMessage(RGY_LOG_DEBUG, _T("Finish thread to send data to encoder.\n"));
         if (m_threadSendEncoder->joinable()) {
             m_threadSendEncoder->join();
         }
         m_threadSendEncoder.reset();
     }
+    AddMessage(RGY_LOG_DEBUG, _T("Close encoder input queue.\n"));
     m_queueInputEncoder.reset();
     m_videoReplace.reset();
     if (m_threadInputTS) {
+        AddMessage(RGY_LOG_DEBUG, _T("Finish thread to read input.\n"));
         if (m_threadInputTS->joinable()) {
             m_threadInputTS->join();
         }
         m_threadInputTS.reset();
     }
+    AddMessage(RGY_LOG_DEBUG, _T("Close ts input queue.\n"));
     m_queueInputReplace.reset();
 }
 
@@ -1213,6 +1221,7 @@ RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
             return RGY_ERR_NONE;
         }
     }
+    AddMessage(RGY_LOG_DEBUG, _T("Reached input ts EOF (main thread).\n"));
     return RGY_ERR_MORE_DATA;
 }
 
