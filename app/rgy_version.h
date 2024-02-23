@@ -61,6 +61,8 @@ const char *get_app_version();
 #define OVERRIDE_HYPER_MODE_HEVC_FROM_H264 1
 #define LIMIT_HYPER_MODE_TO_KNOWN_CODECS 1
 #define ENABLE_QSV_TUNE_QUERY 0
+#define ENABLE_AVOID_IDLE_CLOCK 0
+#define ENABLE_VPP_SMOOTH_QP_FRAME 0
 
 #if defined(_WIN32) || defined(_WIN64)
 
