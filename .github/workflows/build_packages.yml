@@ -54,18 +54,18 @@ jobs:
           echo "local_group_id=${LOCAL_GROUP_ID}" >> $GITHUB_OUTPUT
 
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: true
           fetch-depth: 0
 
       - name: Set up QEMU
         if: matrix.platform != 'amd64'
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         id: buildx
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@v3
 
       - name: Cache Docker layers
         uses: actions/cache@v3
@@ -84,7 +84,7 @@ jobs:
 
       - name: Build Docker image
         id: docker_build
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v5
         with:
           context: ./
           file: ${{ env.DOCKER_FILE }}
@@ -121,6 +121,11 @@ jobs:
           echo ${PKGFILE}
           echo "pkgfile=${PKGFILE}" >> $GITHUB_OUTPUT
 
+      - name: Calc hash
+        id: calc_hash
+        run: |
+          7z h -scrc* ${{ steps.build_exec.outputs.pkgfile }}
+
       - name: Upload Release Asset
         id: upload-release-asset 
         uses: softprops/action-gh-release@v1
@@ -131,7 +136,7 @@ jobs:
           files: ${{ steps.build_exec.outputs.pkgfile }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: tsreplace_${{ matrix.dockerimg }}_${{ matrix.pkgtype }}_${{ matrix.platform }}
           path: ${{ steps.build_exec.outputs.pkgfile }}
