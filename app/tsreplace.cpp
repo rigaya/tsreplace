@@ -2029,9 +2029,7 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
 
 int _tmain(const int argc, const TCHAR **argv) {
 #if defined(_WIN32) || defined(_WIN64)
-    if (check_locale_is_ja()) {
-        _tsetlocale(LC_ALL, _T("Japanese"));
-    }
+    _tsetlocale(LC_CTYPE, _T(".UTF8"));
 #endif //#if defined(_WIN32) || defined(_WIN64)
 
     //log-levelの取得
