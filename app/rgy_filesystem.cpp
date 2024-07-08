@@ -127,7 +127,11 @@ bool CreateDirectoryRecursive(const char *dir) {
     if (std::filesystem::exists(targetDir)) {
         return true;
     }
-    return std::filesystem::create_directories(targetDir);
+    try {
+        return std::filesystem::create_directories(targetDir);
+    } catch (...) {
+        return false;
+    }
 }
 #if defined(_WIN32) || defined(_WIN64)
 bool CreateDirectoryRecursive(const wchar_t *dir) {
@@ -135,7 +139,11 @@ bool CreateDirectoryRecursive(const wchar_t *dir) {
     if (std::filesystem::exists(targetDir)) {
         return true;
     }
-    return std::filesystem::create_directories(targetDir);
+    try {
+        return std::filesystem::create_directories(targetDir);
+    } catch (...) {
+        return false;
+    }
 }
 #endif //#if defined(_WIN32) || defined(_WIN64)
 
@@ -182,6 +190,14 @@ bool rgy_file_exists(const std::string& filepath) {
 
 bool rgy_file_exists(const std::wstring& filepath) {
     return std::filesystem::exists(filepath) && std::filesystem::is_regular_file(filepath);
+}
+
+bool rgy_directory_exists(const std::string& directorypath) {
+    return std::filesystem::exists(directorypath) && std::filesystem::is_directory(directorypath);
+}
+
+bool rgy_directory_exists(const std::wstring& directorypath) {
+    return std::filesystem::exists(directorypath) && std::filesystem::is_directory(directorypath);
 }
 
 bool rgy_get_filesize(const char *filepath, uint64_t *filesize) {
