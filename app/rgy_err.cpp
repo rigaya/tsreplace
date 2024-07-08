@@ -1320,6 +1320,25 @@ const TCHAR *get_err_mes(RGY_ERR sts) {
     //CASE_ERR_NPP(NPP_MISALIGNED_DST_ROI_WARNING);
 #undef CASE_ERR_NPP
 
+#define CASE_ERR_NVOFFRUC(x) case RGY_ERR_NvOFFRUC_ ## x: return _T("NvOFFRUC_") _T(#x);
+    CASE_ERR_NVOFFRUC(NvOFFRUC_NOT_SUPPORTED);
+    CASE_ERR_NVOFFRUC(INVALID_PTR);
+    CASE_ERR_NVOFFRUC(INVALID_PARAM);
+    CASE_ERR_NVOFFRUC(INVALID_HANDLE);
+    CASE_ERR_NVOFFRUC(OUT_OF_SYSTEM_MEMORY);
+    CASE_ERR_NVOFFRUC(OUT_OF_VIDEO_MEMORY);
+    CASE_ERR_NVOFFRUC(OPENCV_NOT_AVAILABLE);
+    CASE_ERR_NVOFFRUC(UNIMPLEMENTED);
+    CASE_ERR_NVOFFRUC(OF_FAILURE);
+    CASE_ERR_NVOFFRUC(DUPLICATE_RESOURCE);
+    CASE_ERR_NVOFFRUC(UNREGISTERED_RESOURCE);
+    CASE_ERR_NVOFFRUC(INCORRECT_API_SEQUENCE);
+    CASE_ERR_NVOFFRUC(WRITE_TODISK_FAILED);
+    CASE_ERR_NVOFFRUC(PIPELINE_EXECUTION_FAILURE);
+    CASE_ERR_NVOFFRUC(SYNC_WRITE_FAILED);
+    CASE_ERR_NVOFFRUC(GENERIC);
+#undef CASE_ERR_NVOFFRUC
+
 #define CASE_ERR_MPP(x) case RGY_ERR_ ## x: return _T(#x);
     CASE_ERR_MPP(MPP_ERR_UNKNOW);
     CASE_ERR_MPP(MPP_ERR_NULL_PTR);
@@ -1343,6 +1362,25 @@ const TCHAR *get_err_mes(RGY_ERR sts) {
     CASE_ERR_MPP(MPP_ERR_BUFFER_FULL);
     CASE_ERR_MPP(MPP_ERR_DISPLAY_FULL);
 #undef CASE_ERR_MPP
+
+    case RGY_ERR_NVSDK_NGX_FeatureNotSupported: return _T("NVSDK NGX ERR: Feature is not supported on current hardware");
+    case RGY_ERR_NVSDK_NGX_PlatformError: return _T("NVSDK NGX ERR: Platform error - check d3d12 debug layer log for more information");
+    case RGY_ERR_NVSDK_NGX_FeatureAlreadyExists: return _T("NVSDK NGX ERR: Feature with given parameters already exists");
+    case RGY_ERR_NVSDK_NGX_FeatureNotFound: return _T("NVSDK NGX ERR: Feature with provided handle does not exist");
+    case RGY_ERR_NVSDK_NGX_InvalidParameter: return _T("NVSDK NGX ERR: Invalid parameter was provided");
+    case RGY_ERR_NVSDK_NGX_ScratchBufferTooSmall: return _T("NVSDK NGX ERR: Provided buffer is too small, please use size provided by NVSDK_NGX_GetScratchBufferSize");
+    case RGY_ERR_NVSDK_NGX_NotInitialized: return _T("NVSDK NGX ERR: SDK was not initialized properly");
+    case RGY_ERR_NVSDK_NGX_UnsupportedInputFormat: return _T("NVSDK NGX ERR: Unsupported format used for input/output buffers");
+    case RGY_ERR_NVSDK_NGX_RWFlagMissing: return _T("NVSDK NGX ERR: Feature input/output needs RW access (UAV) (d3d11/d3d12 specific)");
+    case RGY_ERR_NVSDK_NGX_MissingInput: return _T("NVSDK NGX ERR: Feature was created with specific input but none is provided at evaluation");
+    case RGY_ERR_NVSDK_NGX_UnableToInitializeFeature: return _T("NVSDK NGX ERR: Feature is not available on the system");
+    case RGY_ERR_NVSDK_NGX_OutOfDate: return _T("NVSDK NGX ERR: NGX system libraries are old and need an update");
+    case RGY_ERR_NVSDK_NGX_OutOfGPUMemory: return _T("NVSDK NGX ERR: Feature requires more GPU memory than it is available on system");
+    case RGY_ERR_NVSDK_NGX_UnsupportedFormat: return _T("NVSDK NGX ERR: Format used in input buffer(s) is not supported by feature");
+    case RGY_ERR_NVSDK_NGX_UnableToWriteToAppDataPath: return _T("NVSDK NGX ERR: Path provided in InApplicationDataPath cannot be written to");
+    case RGY_ERR_NVSDK_NGX_UnsupportedParameter: return _T("NVSDK NGX ERR: Unsupported parameter was provided (e.g. specific scaling factor is unsupported)");
+    case RGY_ERR_NVSDK_NGX_Denied: return _T("NVSDK NGX ERR: The feature or application was denied (contact NVIDIA for further details)");
+    case RGY_ERR_NVSDK_NGX_NotImplemented: return _T("NVSDK NGX ERR: The feature or functionality is not implemented");
 
     default:                                      return _T("unknown error.");
     }
