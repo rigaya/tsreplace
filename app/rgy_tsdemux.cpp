@@ -73,6 +73,7 @@ int findsync(const uint8_t *data, const int data_size, int *unit_size) {
 
 RGYTSDemuxResult::RGYTSDemuxResult() :
     type(RGYTSPacketType::UNKNOWN),
+    stream(),
     pts(TIMESTAMP_INVALID_VALUE),
     dts(TIMESTAMP_INVALID_VALUE),
     pesHeader() {
@@ -204,15 +205,16 @@ void RGYTSDemuxer::parsePMT(const RGYTS_PSI *psi) {
         return;
     }
 
-    const int lastAudio1Pid = m_service.aud0.pid;
-    const int lastAudio2Pid = m_service.aud1.pid;
-    m_service.vid.pid = 0;
-    m_service.aud0.pid = 0;
-    m_service.aud1.pid = 0;
-    m_service.cap.pid = 0;
+    const int lastAudio1Pid = m_service.aud0.stream.pid;
+    const int lastAudio2Pid = m_service.aud1.stream.pid;
+    m_service.vid.stream.pid = 0;
+    m_service.aud0.stream.pid = 0;
+    m_service.aud1.stream.pid = 0;
+    m_service.cap.stream.pid = 0;
     m_service.pidSuperimpose = 0;
-    m_service.aud0.type = RGYTSStreamType::ADTS_TRANSPORT;
-    m_service.aud1.type = RGYTSStreamType::ADTS_TRANSPORT;
+    m_service.aud0.stream.type = RGYTSStreamType::ADTS_TRANSPORT;
+    m_service.aud1.stream.type = RGYTSStreamType::ADTS_TRANSPORT;
+    m_service.pidList.clear();
     int videoDescPos = 0;
     int audio1DescPos = 0;
     int audio2DescPos = 0;
@@ -226,6 +228,8 @@ void RGYTSDemuxer::parsePMT(const RGYTS_PSI *psi) {
         const auto streamType = (RGYTSStreamType)table[pos];
         const int esPid = ((table[pos + 1] & 0x1f) << 8) | table[pos + 2];
         const int esInfoLength = ((table[pos + 3] & 0x03) << 8) | table[pos + 4];
+        RGYTSStreamInfo streamInfo = { streamType, esPid };
+        m_service.pidList.push_back(streamInfo);
         if (pos + 5 + esInfoLength <= tableLen) {
             int componentTag = 0xff;
             for (int i = pos + 5; i + 2 < pos + 5 + esInfoLength; i += 2 + table[i + 1]) {
@@ -238,41 +242,41 @@ void RGYTSDemuxer::parsePMT(const RGYTS_PSI *psi) {
             if (streamType == RGYTSStreamType::H262_VIDEO ||
                 streamType == RGYTSStreamType::H264_VIDEO ||
                 streamType == RGYTSStreamType::H265_VIDEO) {
-                if ((m_service.vid.pid == 0 && componentTag == 0xff) || componentTag == 0x00 || componentTag == 0x81) {
-                    m_service.vid.pid = esPid;
+                if ((m_service.vid.stream.pid == 0 && componentTag == 0xff) || componentTag == 0x00 || componentTag == 0x81) {
+                    m_service.vid.stream.pid = esPid;
                     videoDescPos = pos;
                     maybeCProfile = componentTag == 0x81;
                 }
             } else if (streamType == RGYTSStreamType::ADTS_TRANSPORT) {
-                if ((m_service.aud0.pid == 0 && componentTag == 0xff) || componentTag == 0x10 || componentTag == 0x83 || componentTag == 0x85) {
-                    m_service.aud0.pid = esPid;
-                    m_service.aud0.type = streamType;
+                if ((m_service.aud0.stream.pid == 0 && componentTag == 0xff) || componentTag == 0x10 || componentTag == 0x83 || componentTag == 0x85) {
+                    m_service.aud0.stream.pid = esPid;
+                    m_service.aud0.stream.type = streamType;
                     audio1DescPos = pos;
                     audio1ComponentTagUnknown = componentTag == 0xff;
                 } else if (componentTag == 0x11) {
                     if (m_audio1Mode != 2) {
-                        m_service.aud1.pid = esPid;
-                        m_service.aud1.type = streamType;
+                        m_service.aud1.stream.pid = esPid;
+                        m_service.aud1.stream.type = streamType;
                         audio2DescPos = pos;
                     }
                 }
             } else if (streamType == RGYTSStreamType::MPEG2_AUDIO) {
-                if (m_service.aud0.pid == 0) {
-                    m_service.aud0.pid = esPid;
-                    m_service.aud0.type = streamType;
+                if (m_service.aud0.stream.pid == 0) {
+                    m_service.aud0.stream.pid = esPid;
+                    m_service.aud0.stream.type = streamType;
                     audio1DescPos = pos;
                     audio1ComponentTagUnknown = false;
-                } else if (m_service.aud1.pid == 0) {
+                } else if (m_service.aud1.stream.pid == 0) {
                     if (m_audio1Mode != 2) {
-                        m_service.aud1.pid = esPid;
-                        m_service.aud1.type = streamType;
+                        m_service.aud1.stream.pid = esPid;
+                        m_service.aud1.stream.type = streamType;
                         audio2DescPos = pos;
                     }
                 }
             } else if (streamType == RGYTSStreamType::PES_PRIVATE_DATA) {
                 if (componentTag == 0x30 || componentTag == 0x87) {
                     if (m_captionMode != 2) {
-                        m_service.cap.pid = esPid;
+                        m_service.cap.stream.pid = esPid;
                         captionDescPos = pos;
                     }
                 } else if (componentTag == 0x38 || componentTag == 0x88) {
@@ -286,11 +290,11 @@ void RGYTSDemuxer::parsePMT(const RGYTS_PSI *psi) {
         pos += 5 + esInfoLength;
     }
 
-    if (m_service.aud0.pid != lastAudio1Pid) {
+    if (m_service.aud0.stream.pid != lastAudio1Pid) {
         m_service.aud0.pts = -1;
         m_service.aud0.packets.clear();
     }
-    if (m_service.aud1.pid != lastAudio2Pid) {
+    if (m_service.aud1.stream.pid != lastAudio2Pid) {
         m_service.aud1.pts = -1;
         m_service.aud1.packets.clear();
     }
@@ -302,12 +306,21 @@ void RGYTSDemuxer::parsePMT(const RGYTS_PSI *psi) {
     m_service.versionNumber = psi->version_number;
 
     AddMessage(loglevel, _T("  version    %4d\n"),  m_service.versionNumber);
-    AddMessage(loglevel, _T("  program  0x%04x\n"), m_service.programNumber);
-    AddMessage(loglevel, _T("  pid vid  0x%04x\n"), m_service.vid.pid);
-    AddMessage(loglevel, _T("  pid aud0 0x%04x\n"), m_service.aud0.pid);
-    AddMessage(loglevel, _T("  pid aud1 0x%04x\n"), m_service.aud1.pid);
-    AddMessage(loglevel, _T("  pid cap  0x%04x\n"), m_service.cap.pid);
+    AddMessage(loglevel, _T("  program  0x%04x (%d)\n"), m_service.programNumber, m_service.programNumber);
+    AddMessage(loglevel, _T("  pid vid  0x%04x\n"), m_service.vid.stream.pid);
+    AddMessage(loglevel, _T("  pid aud0 0x%04x\n"), m_service.aud0.stream.pid);
+    AddMessage(loglevel, _T("  pid aud1 0x%04x\n"), m_service.aud1.stream.pid);
+    AddMessage(loglevel, _T("  pid cap  0x%04x\n"), m_service.cap.stream.pid);
     AddMessage(loglevel, _T("  pid pcr  0x%04x\n"), m_service.pidPcr);
+    for (size_t i = 0; i < m_service.pidList.size(); i++) {
+        if (m_service.pidList[i].pid != m_service.vid.stream.pid &&
+            m_service.pidList[i].pid != m_service.aud0.stream.pid &&
+            m_service.pidList[i].pid != m_service.aud1.stream.pid &&
+            m_service.pidList[i].pid != m_service.cap.stream.pid &&
+            m_service.pidList[i].pid != m_service.pidPcr) {
+            AddMessage(loglevel, _T("  pid      0x%04x (type=%d)\n"), m_service.pidList[i].pid, m_service.pidList[i].type);
+        }
+    }
 }
 
 void RGYTSDemuxer::parsePMT(const uint8_t *payload, const int payloadSize, const int unitStart, const int counter) {
@@ -466,6 +479,14 @@ std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt
     }
 
     result.type = RGYTSPacketType::OTHER;
+    result.stream.pid = 0;
+    result.stream.type = RGYTSStreamType::UNKNOWN;
+    for (auto& st : m_service.pidList) {
+        if (packetHeader.PID == st.pid) {
+            result.stream = st;
+            break;
+        }
+    }
     if (packetHeader.PID == m_service.pidPcr) {
         const auto pcr = parsePCR(packetHeader, pkt->data());
         if (pcr != TIMESTAMP_INVALID_VALUE) {
@@ -475,26 +496,26 @@ std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt
         result.pts = pcr;
         AddMessage((pcr != TIMESTAMP_INVALID_VALUE) ? RGY_LOG_TRACE : RGY_LOG_WARN,
             _T("  pid pcr  0x%04x, %lld\n"), m_service.pidPcr, pcr);
-    } else if (packetHeader.PID == m_service.vid.pid) {
+    } else if (packetHeader.PID == m_service.vid.stream.pid) {
         result.type = RGYTSPacketType::VID;
         if (packetHeader.PayloadStartFlag) {
             auto pes = parsePESHeader(pkt->packet);
             AddMessage(RGY_LOG_TRACE, _T("  pid vid  0x%04x, %s, %4d, %lld, %lld\n"),
-                m_service.vid.pid, packetHeader.adapt.random_access ? _T("K") : _T("_"), packetHeader.payloadSize, pes.pts, pes.dts);
+                m_service.vid.stream.pid, packetHeader.adapt.random_access ? _T("K") : _T("_"), packetHeader.payloadSize, pes.pts, pes.dts);
             result.pts = pes.pts;
             result.dts = pes.dts;
         }
-    } else if (packetHeader.PID == m_service.aud0.pid) {
+    } else if (packetHeader.PID == m_service.aud0.stream.pid) {
         if (packetHeader.PayloadStartFlag) {
             auto pes = parsePESHeader(pkt->packet);
-            AddMessage(RGY_LOG_TRACE, _T("  pid aud0 0x%04x, %lld\n"), m_service.vid.pid, pes.pts);
+            AddMessage(RGY_LOG_TRACE, _T("  pid aud0 0x%04x, %lld\n"), m_service.vid.stream.pid, pes.pts);
             result.pts = pes.pts;
             result.dts = pes.dts;
         }
-    } else if (packetHeader.PID == m_service.cap.pid) {
+    } else if (packetHeader.PID == m_service.cap.stream.pid) {
         if (packetHeader.PayloadStartFlag) {
             auto pes = parsePESHeader(pkt->packet);
-            AddMessage(RGY_LOG_TRACE, _T("  pid cap  0x%04x, %lld\n"), m_service.vid.pid, pes.pts);
+            AddMessage(RGY_LOG_TRACE, _T("  pid cap  0x%04x, %lld\n"), m_service.vid.stream.pid, pes.pts);
             result.pts = pes.pts;
             result.dts = pes.dts;
         }

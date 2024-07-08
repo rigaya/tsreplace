@@ -138,7 +138,9 @@ TSRReplaceParams::TSRReplaceParams() :
     output(),
     startpoint(TSRReplaceStartPoint::KeyframPts),
     addAud(true),
-    addHeaders(true) {
+    addHeaders(true),
+    removeTypeD(false),
+    targetService(0) {
 }
 
 TSReplaceVideo::TSReplaceVideo(std::shared_ptr<RGYLog> log) :
@@ -963,6 +965,8 @@ TSReplace::TSReplace() :
     m_ptswrapOffset(0),
     m_addAud(true),
     m_addHeaders(true),
+    m_removeTypeD(false),
+    m_targetService(0),
     m_parseNalH264(get_parse_nal_unit_h264_func()),
     m_parseNalHevc(get_parse_nal_unit_hevc_func()),
     m_encoder(),
@@ -1021,6 +1025,8 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_startPoint = prms.startpoint;
     m_addAud = prms.addAud;
     m_addHeaders = prms.addHeaders;
+    m_removeTypeD = prms.removeTypeD;
+    m_targetService = prms.targetService;
 
     AddMessage(RGY_LOG_INFO, _T("Output  file: \"%s\".\n"), prms.output.c_str());
     AddMessage(RGY_LOG_INFO, _T("Input   file: \"%s\".\n"), prms.input.c_str());
@@ -1037,6 +1043,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     AddMessage(RGY_LOG_INFO, _T("Start point : %s.\n"), get_cx_desc(list_startpoint, (int)prms.startpoint));
     AddMessage(RGY_LOG_INFO, _T("Add AUD     : %s.\n"), m_addAud ? _T("on") : _T("off"));
     AddMessage(RGY_LOG_INFO, _T("Add Headers : %s.\n"), m_addHeaders ? _T("on") : _T("off"));
+    AddMessage(RGY_LOG_INFO, _T("Remove TypeD: %s.\n"), m_removeTypeD ? _T("on") : _T("off"));
 
     if (_tcscmp(m_fileTS.c_str(), _T("-")) != 0) {
         AddMessage(RGY_LOG_DEBUG, _T("Open input file \"%s\".\n"), m_fileTS.c_str());
@@ -1263,7 +1270,7 @@ RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
     // Create PMT
     std::vector<uint8_t> buf(1, 0);
     buf.insert(buf.end(), table + 0, table + pos); // descriptor まで
-    if (m_demuxer->service()->pidPcr == m_demuxer->service()->vid.pid) {
+    if (m_demuxer->service()->pidPcr == m_demuxer->service()->vid.stream.pid) {
         buf[1+ 9] = (uint8_t)((m_vidPIDReplace & 0x1fff) >> 8) | (buf[1 + 9] & 0xE0); // PIDの上書き
         buf[1+10] = (uint8_t) (m_vidPIDReplace & 0x00ff);                             // PIDの上書き
     }
@@ -1283,6 +1290,8 @@ RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
             buf.push_back((uint8_t)RGYTSDescriptor::StreamIdentifier);
             buf.push_back(0x01);
             buf.push_back(0x00);
+        } else if (m_removeTypeD && streamType == RGYTSStreamType::TYPE_D) {
+            // 出力しない
         } else {
             buf.insert(buf.end(), table + pos, table + pos + 5 + esInfoLength);
         }
@@ -1571,7 +1580,7 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     }
     AddMessage(RGY_LOG_DEBUG, _T("Got PAT/PMT.\n"));
 
-    m_vidPIDReplace = service->vid.pid;
+    m_vidPIDReplace = service->vid.stream.pid;
     AddMessage(RGY_LOG_INFO, _T("Output vid pid: 0x%04x.\n"), m_vidPIDReplace);
 
     // 映像の先頭の時刻を検出
@@ -1814,9 +1823,19 @@ RGY_ERR TSReplace::restruct() {
                     }
                 }
                 break;
-            case RGYTSPacketType::OTHER:
-                writePacket(tspkt.get());
+            case RGYTSPacketType::OTHER: {
+                bool output = true;
+                if (m_removeTypeD && ret.stream.type == RGYTSStreamType::TYPE_D) {
+                    output = false;
+                }
+                if (m_targetService != 0 && ret.stream.pid == 0) {
+                    output = false;
+                }
+                if (output) {
+                    writePacket(tspkt.get());
+                }
                 break;
+            }
             default:
                 break;
             }
@@ -2017,6 +2036,14 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
     }
     if (IS_OPTION("no-add-headers")) {
         prm.addHeaders = false;
+        return 0;
+    }
+    if (IS_OPTION("remove-typed")) {
+        prm.removeTypeD = true;
+        return 0;
+    }
+    if (IS_OPTION("no-remove-typed")) {
+        prm.removeTypeD = false;
         return 0;
     }
     if (IS_OPTION("log-level")) { // 最初に読み取り済み

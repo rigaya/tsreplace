@@ -203,6 +203,8 @@ struct TSRReplaceParams {
     std::vector<tstring> encoderArgs;
     bool addAud;
     bool addHeaders;
+    bool removeTypeD;
+    int targetService;
 
     TSRReplaceParams();
 };
@@ -296,6 +298,8 @@ protected:
     int64_t m_ptswrapOffset; // PCR wrapの加算分
     bool m_addAud; // audの挿入
     bool m_addHeaders; // ヘッダの挿入
+    bool m_removeTypeD; // データの削除
+    int m_targetService; // 出力するserviceの番号
     decltype(parse_nal_unit_h264_c) *m_parseNalH264; // H.264用のnal unit分解関数へのポインタ
     decltype(parse_nal_unit_hevc_c) *m_parseNalHevc; // HEVC用のnal unit分解関数へのポインタ
 

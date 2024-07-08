@@ -101,10 +101,12 @@ enum class RGYTSPacketType {
 
 struct RGYTSDemuxResult {
     RGYTSPacketType type;
+    RGYTSStreamInfo stream;
     int64_t pts;
     int64_t dts;
     std::unique_ptr<RGYTSPESHeader> pesHeader;
     std::unique_ptr<RGYTS_PSI> psi;
+    bool isTargetService;
 
     RGYTSDemuxResult();
 };

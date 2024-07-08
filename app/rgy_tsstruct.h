@@ -158,11 +158,17 @@ enum class RGYTSStreamType : uint8_t {
     MPEG2_AUDIO      = 0x04,
     ADTS_TRANSPORT   = 0x0f,
     PES_PRIVATE_DATA = 0x06,
+    TYPE_D           = 0x0D,
+};
+
+
+struct RGYTSStreamInfo {
+    RGYTSStreamType type;
+    int pid;
 };
 
 struct RGYTSStream {
-    RGYTSStreamType type;
-    int pid;
+    RGYTSStreamInfo stream;
     int64_t pts;
     std::vector<uint8_t> packets;
 };
@@ -175,6 +181,7 @@ struct RGYService {
     RGYTSStream aud0;
     RGYTSStream aud1;
     RGYTSStream cap;
+    std::vector<RGYTSStreamInfo> pidList;
     int pidSuperimpose;
 };
 
