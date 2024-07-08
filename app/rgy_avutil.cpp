@@ -91,6 +91,22 @@ bool checkAvcodecLicense() {
     return (check(avutil_license()) && check(avcodec_license()) && check(avformat_license()));
 }
 
+int getCodecTickPerFrames(const AVCodecID codecID) {
+#if defined(AV_CODEC_PROP_FIELDS)
+    auto codecDesc = avcodec_descriptor_get(codecID);
+    return (codecDesc && (codecDesc->props & AV_CODEC_PROP_FIELDS)) ? 2 : 1;
+#else
+    const AVCodec *codec = avcodec_find_decoder(codecID);
+    if (!codec) {
+        return 1;
+    }
+    AVCodecContext *pCodecCtx = avcodec_alloc_context3(codec);
+    const int tick_per_frame = std::max(pCodecCtx->ticks_per_frame, 1);
+    avcodec_free_context(&pCodecCtx);
+    return tick_per_frame;
+#endif
+}
+
 //mfxFrameInfoから、AVFieldOrderを返す
 AVFieldOrder picstrcut_rgy_to_avfieldorder(RGY_PICSTRUCT picstruct) {
     if (picstruct & RGY_PICSTRUCT_TFF) {
@@ -102,9 +118,34 @@ AVFieldOrder picstrcut_rgy_to_avfieldorder(RGY_PICSTRUCT picstruct) {
     return AV_FIELD_PROGRESSIVE;
 }
 
+//AVFrameのdurationを取得
+int64_t rgy_avframe_get_duration(const AVFrame *frame) {
+#if AV_FRAME_DURATION_AVAIL
+    return frame->duration;
+#else
+    return frame->pkt_duration;
+#endif
+}
+
+bool rgy_avframe_interlaced(const AVFrame *frame) {
+#if defined(AV_FRAME_FLAG_INTERLACED)
+    return (frame->flags & AV_FRAME_FLAG_INTERLACED) != 0;
+#else
+    return frame->interlaced_frame != 0;
+#endif
+}
+
+bool rgy_avframe_tff_flag(const AVFrame *frame) {
+#if defined(AV_FRAME_FLAG_INTERLACED)
+    return (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) != 0;
+#else
+    return frame->top_field_first != 0;
+#endif
+}
+
 RGY_PICSTRUCT picstruct_avframe_to_rgy(const AVFrame *frame) {
-    if (frame->interlaced_frame) {
-        return frame->top_field_first ? RGY_PICSTRUCT_FRAME_TFF : RGY_PICSTRUCT_FRAME_BFF;
+    if (rgy_avframe_interlaced(frame)) {
+        return (rgy_avframe_tff_flag(frame)) ? RGY_PICSTRUCT_FRAME_TFF : RGY_PICSTRUCT_FRAME_BFF;
     }
     return RGY_PICSTRUCT_FRAME;
 }
@@ -167,7 +208,7 @@ tstring getHWDecSupportedCodecList() {
 }
 
 //利用可能な音声エンコーダ/デコーダを表示
-tstring getAVCodecs(RGYAVCodecType flag) {
+tstring getAVCodecs(RGYAVCodecType flag, const std::vector<AVMediaType> mediatype) {
     if (!check_avcodec_dll()) {
         return error_mes_avcodec_dll_not_found();
     }
@@ -183,7 +224,7 @@ tstring getAVCodecs(RGYAVCodecType flag) {
     void *icodec = nullptr;
     const AVCodec *codec = nullptr;
     while (nullptr != (codec = av_codec_iterate(&icodec))) {
-        if (codec->type == AVMEDIA_TYPE_AUDIO || codec->type == AVMEDIA_TYPE_SUBTITLE || codec->type == AVMEDIA_TYPE_DATA) {
+        if (std::find(mediatype.begin(), mediatype.end(), codec->type) != mediatype.end()) {
             bool alreadyExists = false;
             for (uint32_t i = 0; i < list.size(); i++) {
                 if (0 == strcmp(list[i].name, codec->name)) {
@@ -799,6 +840,7 @@ static const auto CSP_PIXFMT_RGY = make_array<std::pair<AVPixelFormat, RGY_CSP>>
     std::make_pair(AV_PIX_FMT_YUVJ420P,    RGY_CSP_YV12),
     std::make_pair(AV_PIX_FMT_NV12,        RGY_CSP_NV12),
     std::make_pair(AV_PIX_FMT_NV21,        RGY_CSP_NV12),
+    std::make_pair(AV_PIX_FMT_P010LE,      RGY_CSP_P010),
     std::make_pair(AV_PIX_FMT_YUV422P,     RGY_CSP_YUV422),
     std::make_pair(AV_PIX_FMT_YUVJ422P,    RGY_CSP_YUV422),
     std::make_pair(AV_PIX_FMT_YUYV422,     RGY_CSP_YUY2),
