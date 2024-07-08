@@ -121,6 +121,7 @@ enum RGY_CODEC {
     RGY_CODEC_VP9,
     RGY_CODEC_VC1,
     RGY_CODEC_AV1,
+    RGY_CODEC_VVC,
     RGY_CODEC_RAW,
 
     RGY_CODEC_NUM,
@@ -137,6 +138,7 @@ static tstring CodecToStr(RGY_CODEC codec) {
     case RGY_CODEC_VP8:   return _T("VP8");
     case RGY_CODEC_VP9:   return _T("VP9");
     case RGY_CODEC_AV1:   return _T("AV1");
+    case RGY_CODEC_VVC:   return _T("VVC");
     case RGY_CODEC_RAW:   return _T("RAW");
     default: return _T("unknown");
     }
@@ -270,6 +272,7 @@ static const CX_DESC list_rgy_codec[] = {
     { _T("vp8"),   RGY_CODEC_VP8 },
     { _T("vp9"),   RGY_CODEC_VP9 },
     { _T("av1"),   RGY_CODEC_AV1 },
+    { _T("vvc"),   RGY_CODEC_VVC },
     { NULL, 0 }
 };
 
@@ -756,7 +759,7 @@ struct VideoInfo {
 };
 
 enum RGYAVSync : uint32_t {
-    RGY_AVSYNC_ASSUME_CFR = 0x00,
+    RGY_AVSYNC_AUTO       = 0x00,
     RGY_AVSYNC_FORCE_CFR  = 0x01,
     RGY_AVSYNC_VFR        = 0x02,
 };
@@ -794,9 +797,10 @@ static bool is_list_empty(const CX_DESC *list) {
 extern const CX_DESC list_log_level[];
 
 const CX_DESC list_avsync[] = {
-    { _T("cfr"),      RGY_AVSYNC_ASSUME_CFR   },
-    { _T("vfr"),      RGY_AVSYNC_VFR       },
-    { _T("forcecfr"), RGY_AVSYNC_FORCE_CFR },
+    { _T("auto"),     RGY_AVSYNC_AUTO  },
+    { _T("cfr"),      RGY_AVSYNC_AUTO  },
+    { _T("vfr"),      RGY_AVSYNC_VFR         },
+    { _T("forcecfr"), RGY_AVSYNC_FORCE_CFR   },
     { NULL, 0 }
 };
 
