@@ -106,7 +106,6 @@ struct RGYTSDemuxResult {
     int64_t dts;
     std::unique_ptr<RGYTSPESHeader> pesHeader;
     std::unique_ptr<RGYTS_PSI> psi;
-    bool isTargetService;
 
     RGYTSDemuxResult();
 };

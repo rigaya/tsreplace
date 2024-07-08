@@ -1571,6 +1571,8 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
             case RGYTSPacketType::PMT:
                 service = m_demuxer->service();
                 break;
+            default:
+                break;
             }
         }
     }
