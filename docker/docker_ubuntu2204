@@ -11,15 +11,10 @@ RUN apt-get update \
       pkg-config \
       python3 \
       build-essential \
-      libavcodec58 \
       libavcodec-dev \
-      libavutil56 \
       libavutil-dev \
-      libavformat58 \
       libavformat-dev \
-      libswresample3 \
       libswresample-dev \
-      libavfilter7 \
       libavfilter-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
