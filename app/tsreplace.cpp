@@ -1612,14 +1612,11 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
 
 RGY_ERR TSReplace::initEncoder() {
     m_encoder = createRGYPipeProcess();
-    m_encoder->init(PIPE_MODE_ENABLE, PIPE_MODE_ENABLE, PIPE_MODE_ENABLE);
+    m_encoder->init(PIPE_MODE_ENABLE | PIPE_MODE_ENABLE_FP, PIPE_MODE_ENABLE, PIPE_MODE_ENABLE);
 
-    std::vector<const TCHAR *> args;
-    args.push_back(m_encoderPath.c_str());
-    for (const auto& arg : m_encoderArgs) {
-        args.push_back(arg.c_str());
-    }
-    args.push_back(nullptr);
+    std::vector<tstring> args;
+    args.push_back(m_encoderPath);
+    vector_cat(args, m_encoderArgs);
 
     tstring optionstr;
     for (const auto& arg : m_encoderArgs) {
@@ -1645,15 +1642,15 @@ RGY_ERR TSReplace::initEncoder() {
             if (bytes_read < 0) {
                 break;
             }
-            const auto bytes_sent = (decltype(bytes_read))m_encoder->stdInWrite(readBuffer.data(), (size_t)bytes_read);
+            const auto bytes_sent = (decltype(bytes_read))m_encoder->stdInFpWrite(readBuffer.data(), (size_t)bytes_read);
             if (bytes_sent != bytes_read) {
                 AddMessage(RGY_LOG_ERROR, _T("Failed to send bitstream to encoder.\n"));
                 break;
             }
-            m_encoder->stdInFlush();
+            m_encoder->stdInFpFlush();
         }
         AddMessage(RGY_LOG_DEBUG, _T("Reached encoder input EOF.\n"));
-        m_encoder->stdInClose();
+        m_encoder->stdInFpClose();
     });
 
     m_encQueueOut = std::make_unique<RGYQueueBuffer>();

@@ -41,33 +41,42 @@ RGYPipeProcessWin::RGYPipeProcessWin() :
 }
 
 RGYPipeProcessWin::~RGYPipeProcessWin() {
-
+    close();
 }
 
 int RGYPipeProcessWin::startPipes() {
     SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES), NULL, TRUE };
-    if (m_pipe.stdOut.mode) {
+    if (m_pipe.stdOut.mode & PIPE_MODE_ENABLE) {
         if (!CreatePipe(&m_pipe.stdOut.h_read, &m_pipe.stdOut.h_write, &sa, m_pipe.stdOut.bufferSize) ||
             !SetHandleInformation(m_pipe.stdOut.h_read, HANDLE_FLAG_INHERIT, 0))
             return 1;
+        if ((m_pipe.stdOut.mode & PIPE_MODE_ENABLE_FP)
+            && (m_pipe.stdOut.fp = _fdopen(_open_osfhandle((intptr_t)m_pipe.stdOut.h_read, _O_BINARY), "rb")) == NULL) {
+            return 1;
+        }
     }
-    if (m_pipe.stdErr.mode) {
+    if (m_pipe.stdErr.mode & PIPE_MODE_ENABLE) {
         if (!CreatePipe(&m_pipe.stdErr.h_read, &m_pipe.stdErr.h_write, &sa, m_pipe.stdErr.bufferSize) ||
             !SetHandleInformation(m_pipe.stdErr.h_read, HANDLE_FLAG_INHERIT, 0))
             return 1;
+        if ((m_pipe.stdErr.mode & PIPE_MODE_ENABLE_FP)
+            && (m_pipe.stdErr.fp = _fdopen(_open_osfhandle((intptr_t)m_pipe.stdErr.h_read, _O_BINARY), "rb")) == NULL) {
+            return 1;
+        }
     }
-    if (m_pipe.stdIn.mode) {
+    if (m_pipe.stdIn.mode & PIPE_MODE_ENABLE) {
         if (!CreatePipe(&m_pipe.stdIn.h_read, &m_pipe.stdIn.h_write, &sa, m_pipe.stdIn.bufferSize) ||
             !SetHandleInformation(m_pipe.stdIn.h_write, HANDLE_FLAG_INHERIT, 0))
             return 1;
-        if ((m_pipe.f_stdin = _fdopen(_open_osfhandle((intptr_t)m_pipe.stdIn.h_write, _O_BINARY), "wb")) == NULL) {
+        if ((m_pipe.stdIn.mode & PIPE_MODE_ENABLE_FP)
+            && (m_pipe.stdIn.fp = _fdopen(_open_osfhandle((intptr_t)m_pipe.stdIn.h_write, _O_BINARY), "wb")) == NULL) {
             return 1;
         }
     }
     return 0;
 }
 
-int RGYPipeProcessWin::run(const std::vector<const TCHAR *>& args, const TCHAR *exedir, uint32_t priority, bool hidden, bool minimized) {
+int RGYPipeProcessWin::run(const std::vector<tstring>& args, const TCHAR *exedir, uint32_t priority, bool hidden, bool minimized) {
     BOOL Inherit = FALSE;
     DWORD flag = priority;
     STARTUPINFO si;
@@ -80,7 +89,7 @@ int RGYPipeProcessWin::run(const std::vector<const TCHAR *>& args, const TCHAR *
     if (m_pipe.stdOut.mode)
         si.hStdOutput = m_pipe.stdOut.h_write;
     if (m_pipe.stdErr.mode)
-        si.hStdError = (m_pipe.stdErr.mode == PIPE_MODE_MUXED) ? m_pipe.stdOut.h_write : m_pipe.stdErr.h_write;
+        si.hStdError = ((m_pipe.stdErr.mode & (PIPE_MODE_ENABLE|PIPE_MODE_MUXED)) == (PIPE_MODE_ENABLE | PIPE_MODE_MUXED)) ? m_pipe.stdOut.h_write : m_pipe.stdErr.h_write;
     if (m_pipe.stdIn.mode)
         si.hStdInput = m_pipe.stdIn.h_read;
     si.dwFlags |= STARTF_USESTDHANDLES;
@@ -95,7 +104,7 @@ int RGYPipeProcessWin::run(const std::vector<const TCHAR *>& args, const TCHAR *
 
     tstring cmd_line;
     for (auto arg : args) {
-        if (arg) {
+        if (!arg.empty()) {
             cmd_line += tstring(arg) + _T(" ");
         }
     }
@@ -104,39 +113,78 @@ int RGYPipeProcessWin::run(const std::vector<const TCHAR *>& args, const TCHAR *
     m_phandle = m_pi.hProcess;
     if (m_pipe.stdOut.mode) {
         CloseHandle(m_pipe.stdOut.h_write);
+        m_pipe.stdOut.h_write = nullptr;
         if (ret) {
             CloseHandle(m_pipe.stdOut.h_read);
+            m_pipe.stdOut.h_read = nullptr;
             m_pipe.stdOut.mode = PIPE_MODE_DISABLE;
         }
     }
     if (m_pipe.stdErr.mode) {
-        if (m_pipe.stdErr.mode)
-            CloseHandle(m_pipe.stdErr.h_write);
+        CloseHandle(m_pipe.stdErr.h_write);
+        m_pipe.stdErr.h_write = nullptr;
         if (ret) {
             CloseHandle(m_pipe.stdErr.h_read);
+            m_pipe.stdErr.h_read = nullptr;
             m_pipe.stdErr.mode = PIPE_MODE_DISABLE;
         }
     }
     if (m_pipe.stdIn.mode) {
         CloseHandle(m_pipe.stdIn.h_read);
+        m_pipe.stdIn.h_read = nullptr;
         if (ret) {
             CloseHandle(m_pipe.stdIn.h_write);
+            m_pipe.stdIn.h_write = nullptr;
             m_pipe.stdIn.mode = PIPE_MODE_DISABLE;
         }
     }
     return ret;
 }
 
-size_t RGYPipeProcessWin::stdInWrite(const void *data, const size_t dataSize) {
-    return _fwrite_nolock(data, 1, dataSize, m_pipe.f_stdin);
+size_t RGYPipeProcessWin::stdInFpWrite(const void *data, const size_t dataSize) {
+    return _fwrite_nolock(data, 1, dataSize, m_pipe.stdIn.fp);
 }
 
-int RGYPipeProcessWin::stdInFlush() {
-    return fflush(m_pipe.f_stdin);
+int RGYPipeProcessWin::stdInFpFlush() {
+    return fflush(m_pipe.stdIn.fp);
 }
 
-int RGYPipeProcessWin::stdInClose() {
-    return fclose(m_pipe.f_stdin);
+int RGYPipeProcessWin::stdInFpClose() {
+    int ret = 0;
+    if (m_pipe.stdIn.fp) {
+        ret = fclose(m_pipe.stdIn.fp);
+        m_pipe.stdIn.fp = nullptr;
+        m_pipe.stdIn.h_write = nullptr;
+    }
+    return ret;
+}
+
+size_t RGYPipeProcessWin::stdOutFpRead(void *data, const size_t dataSize) {
+    return _fread_nolock(data, 1, dataSize, m_pipe.stdOut.fp);
+}
+
+int RGYPipeProcessWin::stdOutFpClose() {
+    int ret = 0;
+    if (m_pipe.stdOut.fp) {
+        ret = fclose(m_pipe.stdOut.fp);
+        m_pipe.stdOut.fp = nullptr;
+        m_pipe.stdOut.h_read = nullptr;
+    }
+    return ret;
+}
+
+size_t RGYPipeProcessWin::stdErrFpRead(void *data, const size_t dataSize) {
+    return _fread_nolock(data, 1, dataSize, m_pipe.stdErr.fp);
+}
+
+int RGYPipeProcessWin::stdErrFpClose() {
+    int ret = 0;
+    if (m_pipe.stdErr.fp) {
+        ret = fclose(m_pipe.stdErr.fp);
+        m_pipe.stdErr.fp = nullptr;
+        m_pipe.stdErr.h_read = nullptr;
+    }
+    return ret;
 }
 
 int RGYPipeProcessWin::stdOutRead(std::vector<uint8_t>& buffer) {
@@ -217,11 +265,46 @@ const PROCESS_INFORMATION& RGYPipeProcessWin::getProcessInfo() {
 }
 
 void RGYPipeProcessWin::close() {
+    if (m_pipe.stdIn.mode & PIPE_MODE_ENABLE_FP) {
+        stdInFpClose();
+    }
+    if (m_pipe.stdOut.mode & PIPE_MODE_ENABLE_FP) {
+        stdOutFpClose();
+    }
+    if (m_pipe.stdErr.mode & PIPE_MODE_ENABLE_FP) {
+        stdErrFpClose();
+    }
+    if (m_pipe.stdIn.h_read) {
+        CloseHandle(m_pipe.stdIn.h_read);
+        m_pipe.stdIn.h_read = nullptr;
+    }
+    if (m_pipe.stdIn.h_write) {
+        CloseHandle(m_pipe.stdIn.h_write);
+        m_pipe.stdIn.h_write = nullptr;
+    }
+    if (m_pipe.stdOut.h_read) {
+        CloseHandle(m_pipe.stdOut.h_read);
+        m_pipe.stdOut.h_read = nullptr;
+    }
+    if (m_pipe.stdOut.h_write) {
+        CloseHandle(m_pipe.stdOut.h_write);
+        m_pipe.stdOut.h_write = nullptr;
+    }
+    if (m_pipe.stdErr.h_read) {
+        CloseHandle(m_pipe.stdErr.h_read);
+        m_pipe.stdErr.h_read = nullptr;
+    }
+    if (m_pipe.stdErr.h_write) {
+        CloseHandle(m_pipe.stdErr.h_write);
+        m_pipe.stdErr.h_write = nullptr;
+    }
     if (m_pi.hProcess) {
         CloseHandle(m_pi.hProcess);
+        m_pi.hProcess = nullptr;
     }
     if (m_pi.hThread) {
         CloseHandle(m_pi.hThread);
+        m_pi.hThread = nullptr;
     }
     memset(&m_pi, 0, sizeof(m_pi));
 }
