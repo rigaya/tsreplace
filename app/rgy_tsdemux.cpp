@@ -108,8 +108,9 @@ RGYTSDemuxer::~RGYTSDemuxer() {
     
 }
 
-RGY_ERR RGYTSDemuxer::init(std::shared_ptr<RGYLog> log) {
+RGY_ERR RGYTSDemuxer::init(std::shared_ptr<RGYLog> log, int selectService) {
     m_log = log;
+    m_selectServiceID = selectService;
     return RGY_ERR_NONE;
 }
 

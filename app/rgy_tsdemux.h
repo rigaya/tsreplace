@@ -123,7 +123,7 @@ class RGYTSDemuxer {
 public:
     RGYTSDemuxer();
     virtual ~RGYTSDemuxer();
-    RGY_ERR init(std::shared_ptr<RGYLog> log);
+    RGY_ERR init(std::shared_ptr<RGYLog> log, int selectService);
     std::tuple<RGY_ERR, RGYTSDemuxResult> parse(const RGYTSPacket *pkt);
 
     const RGYTS_PAT* pat() const { return m_pat.get(); }

@@ -140,7 +140,8 @@ TSRReplaceParams::TSRReplaceParams() :
     addAud(true),
     addHeaders(true),
     removeTypeD(false),
-    targetService(0) {
+    removeNonTargetService(false),
+    selectService(0) {
 }
 
 TSReplaceVideo::TSReplaceVideo(std::shared_ptr<RGYLog> log) :
@@ -976,7 +977,8 @@ TSReplace::TSReplace() :
     m_addAud(true),
     m_addHeaders(true),
     m_removeTypeD(false),
-    m_targetService(0),
+    m_removeNonTargetService(false),
+    m_selectService(0),
     m_parseNalH264(get_parse_nal_unit_h264_func()),
     m_parseNalHevc(get_parse_nal_unit_hevc_func()),
     m_encoder(),
@@ -1036,7 +1038,8 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_addAud = prms.addAud;
     m_addHeaders = prms.addHeaders;
     m_removeTypeD = prms.removeTypeD;
-    m_targetService = prms.targetService;
+    m_selectService = prms.selectService;
+    m_removeNonTargetService = prms.removeNonTargetService;
 
     AddMessage(RGY_LOG_INFO, _T("Output  file: \"%s\".\n"), prms.output.c_str());
     AddMessage(RGY_LOG_INFO, _T("Input   file: \"%s\".\n"), prms.input.c_str());
@@ -1054,6 +1057,10 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     AddMessage(RGY_LOG_INFO, _T("Add AUD     : %s.\n"), m_addAud ? _T("on") : _T("off"));
     AddMessage(RGY_LOG_INFO, _T("Add Headers : %s.\n"), m_addHeaders ? _T("on") : _T("off"));
     AddMessage(RGY_LOG_INFO, _T("Remove TypeD: %s.\n"), m_removeTypeD ? _T("on") : _T("off"));
+    if (m_selectService) {
+        AddMessage(RGY_LOG_INFO, _T("Target Service           : %d.\n"), m_selectService);
+        AddMessage(RGY_LOG_INFO, _T("Remove Non Target Service: %s.\n"), m_removeNonTargetService ? _T("on") : _T("off"));
+    }
 
     if (_tcscmp(m_fileTS.c_str(), _T("-")) != 0) {
         AddMessage(RGY_LOG_DEBUG, _T("Open input file \"%s\".\n"), m_fileTS.c_str());
@@ -1102,7 +1109,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_tsPktSplitter->init(log);
 
     m_demuxer = std::make_unique<RGYTSDemuxer>();
-    m_demuxer->init(log);
+    m_demuxer->init(log, m_selectService);
 
     m_replaceFileFormat = prms.replacefileformat;
     if (prms.replacefile.length() > 0) {
@@ -1838,19 +1845,21 @@ RGY_ERR TSReplace::restruct() {
                             }
                         }
                         break;
-                    case RGYTSPacketType::OTHER: {
-                        bool output = true;
+                    case RGYTSPacketType::OTHER:
                         if (m_removeTypeD && ret.stream.type == RGYTSStreamType::TYPE_D) {
-                            output = false;
-                        }
-                        if (output) {
+                            // データ放送の削除 -> 出力しない
+                        } else {
                             writePacket(tspkt.get());
                         }
                         break;
-                    }
                     default:
                         break;
                     }
+                // 以下、サービス外のパケットか、対象のサービスでないパケット
+                } else if (m_removeTypeD && ret.stream.type == RGYTSStreamType::TYPE_D) {
+                    // データ放送の削除 -> 出力しない
+                } else if (m_removeNonTargetService && m_selectService && ret.programNumber > 0) {
+                    // 対象サービスでない場合、その他のサービスのパケットは削除する -> 出力しない
                 } else {
                     writePacket(tspkt.get());
                 }
@@ -1888,15 +1897,19 @@ static void show_help() {
         _T("         args after \"--encoder\" will be passed to encoder\n")
         _T("         which input should be stdin and output should be stdout\n")
         _T("\n")
-        _T("  --start-point <string>        set start point\n")
-        _T("                                  keyframe, firstframe, firstpacket\n");
-        _T("  --(no-)add-aud                auto insert aud unit\n")
-        _T("  --(no-)add-headers            auto insert headers\n")
+        _T("-s,--service <int> or 0x<hex>   set service id to replace\n")
+        _T("   --remove-other-service       remove packets of not selected service(s)\n")
         _T("\n")
-        _T("  --replace-format <string>     set replace file format\n")
+        _T("   --start-point <string>       set start point\n")
+        _T("                                 keyframe, firstframe, firstpacket\n");
+        _T("   --(no-)add-aud               auto insert aud unit\n")
+        _T("   --(no-)add-headers           auto insert headers\n")
+        _T("   --(no-)remove-typed          remove type-d packets\n")
         _T("\n")
-        _T("  --log-level <string>          set log level\n")
-        _T("                                  debug, info(default), warn, error\n");
+        _T("   --replace-format <string>    set replace file format\n")
+        _T("\n")
+        _T("   --log-level <string>         set log level\n")
+        _T("                                 debug, info(default), warn, error\n");
      
     _ftprintf(stdout, _T("%s\n"), str.c_str());
 }
@@ -1986,6 +1999,9 @@ const TCHAR *cmd_short_opt_to_long(TCHAR short_opt) {
     case _T('r'):
         option_name = _T("replace");
         break;
+    case _T('s'):
+        option_name = _T("service");
+        break;
     case _T('v'):
         option_name = _T("version");
         break;
@@ -2060,6 +2076,29 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
     }
     if (IS_OPTION("no-remove-typed")) {
         prm.removeTypeD = false;
+        return 0;
+    }
+    if (IS_OPTION("service")) {
+        i++;
+        if (strInput[i][0] == _T('0') && strInput[i][1] == _T('x')) {
+            try {
+                prm.selectService = std::stoi(strInput[i], nullptr, 16);
+            } catch (...) {
+                _ftprintf(stderr, _T("Unknown value for --%s: \"%s\""), option_name, strInput[i]);
+                return 1;
+            }
+        } else {
+            try {
+                prm.selectService = std::stoi(strInput[i]);
+            } catch (...) {
+                _ftprintf(stderr, _T("Unknown value for --%s: \"%s\""), option_name, strInput[i]);
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if (IS_OPTION("remove-other-service")) {
+        prm.removeNonTargetService = true;
         return 0;
     }
     if (IS_OPTION("log-level")) { // 最初に読み取り済み
