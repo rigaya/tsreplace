@@ -140,7 +140,7 @@ TSRReplaceParams::TSRReplaceParams() :
     addAud(true),
     addHeaders(true),
     removeTypeD(false),
-    removeNonTargetService(false),
+    removeNonTargetService(true),
     selectService(0) {
 }
 
@@ -977,7 +977,7 @@ TSReplace::TSReplace() :
     m_addAud(true),
     m_addHeaders(true),
     m_removeTypeD(false),
-    m_removeNonTargetService(false),
+    m_removeNonTargetService(true),
     m_selectService(0),
     m_parseNalH264(get_parse_nal_unit_h264_func()),
     m_parseNalHevc(get_parse_nal_unit_hevc_func()),
@@ -1058,9 +1058,9 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     AddMessage(RGY_LOG_INFO, _T("Add Headers : %s.\n"), m_addHeaders ? _T("on") : _T("off"));
     AddMessage(RGY_LOG_INFO, _T("Remove TypeD: %s.\n"), m_removeTypeD ? _T("on") : _T("off"));
     if (m_selectService) {
-        AddMessage(RGY_LOG_INFO, _T("Target Service           : %d.\n"), m_selectService);
-        AddMessage(RGY_LOG_INFO, _T("Remove Non Target Service: %s.\n"), m_removeNonTargetService ? _T("on") : _T("off"));
+        AddMessage(RGY_LOG_INFO, _T("Target Service         : %d.\n"), m_selectService);
     }
+    AddMessage(RGY_LOG_INFO, _T("Preserve Other Services: %s.\n"), m_removeNonTargetService ? _T("off") : _T("on"));
 
     if (_tcscmp(m_fileTS.c_str(), _T("-")) != 0) {
         AddMessage(RGY_LOG_DEBUG, _T("Open input file \"%s\".\n"), m_fileTS.c_str());
@@ -1893,10 +1893,10 @@ RGY_ERR TSReplace::restruct() {
                         break;
                     }
                 // 以下、サービス外のパケットか、対象のサービスでないパケット
-                } else if (m_removeTypeD && ret.stream.type == RGYTSStreamType::TYPE_D) {
+                } else if (m_removeTypeD && ret.programNumber > 0 && ret.stream.type == RGYTSStreamType::TYPE_D) {
                     // データ放送の削除 -> 出力しない
                 } else if (m_removeNonTargetService && m_selectService && ret.programNumber > 0) {
-                    // 対象サービスでない場合、その他のサービスのパケットは削除する -> 出力しない
+                    // 対象サービスでない、他のサービスに属するパケットの場合(ret.programNumber > 0)、そのパケットは削除する -> 出力しない
                 } else {
                     writePacket(tspkt.get());
                 }
@@ -1934,8 +1934,8 @@ static void show_help() {
         _T("         args after \"--encoder\" will be passed to encoder\n")
         _T("         which input should be stdin and output should be stdout\n")
         _T("\n")
-        _T("-s,--service <int> or 0x<hex>   set service id to replace\n")
-        _T("   --remove-other-service       remove packets of not selected service(s)\n")
+        _T("-s,--service <int>              set service id to replace\n")
+        _T("   --preserve-other-services    preserve packets of not selected service(s)\n")
         _T("\n")
         _T("   --start-point <string>       set start point\n")
         _T("                                 keyframe, firstframe, firstpacket\n");
@@ -2134,7 +2134,11 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
         }
         return 0;
     }
-    if (IS_OPTION("remove-other-service")) {
+    if (IS_OPTION("preserve-other-services")) {
+        prm.removeNonTargetService = false;
+        return 0;
+    }
+    if (IS_OPTION("no-preserve-other-services")) {
         prm.removeNonTargetService = true;
         return 0;
     }
