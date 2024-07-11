@@ -233,6 +233,7 @@ void RGYTSDemuxer::parsePMT(RGYTSDemuxProgram *program) {
     service.aud1.stream.type = RGYTSStreamType::ADTS_TRANSPORT;
     service.pidList.clear();
     service.pidList.push_back({ RGYTSStreamType::UNKNOWN, program->pmt_pid.pmt_pid });
+    service.pidList.push_back({ RGYTSStreamType::UNKNOWN, service.pidPcr });
     int videoDescPos = 0;
     int audio1DescPos = 0;
     int audio2DescPos = 0;
@@ -536,7 +537,8 @@ void RGYTSDemuxer::checkPMTList() {
     for (size_t i = 0; i < m_pat->pmt.size(); i++) {
         bool found = false;
         for (auto& program : program_tmp) {
-            if (program->pmt_pid.pmt_pid == m_pat->pmt[i].pmt_pid
+            if (program
+                && program->pmt_pid.pmt_pid == m_pat->pmt[i].pmt_pid
                 && program->pmt_pid.program_number == m_pat->pmt[i].program_number) {
                 m_programs[i] = std::move(program);
                 found = true;
@@ -561,22 +563,35 @@ std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt
         result.type = RGYTSPacketType::PAT;
         return { RGY_ERR_NONE, std::move(result) };
     }
-
-    auto pmt_pid = selectServiceID();
-    if (pmt_pid && packetHeader.PID == pmt_pid->pmt_pid) {
-        auto program = selectProgramFromPMTPID(pmt_pid->pmt_pid);
-        if (!program) {
-            // program新しく作って追加する
-            m_programs.push_back(std::make_unique<RGYTSDemuxProgram>());
-            program = m_programs.back().get();
-            program->pmt_pid = *pmt_pid;
+    // PMT
+    if (m_pat) {
+        const RGYTS_PMT_PID *pmt_pid = nullptr;
+        for (const auto& pmt : m_pat->pmt) {
+            if (packetHeader.PID == pmt.pmt_pid) {
+                pmt_pid = &pmt;
+                break;
+            }
         }
-        m_targetService = &program->service;
+        if (pmt_pid) {
+            auto program = selectProgramFromPMTPID(packetHeader.PID);
+            if (!program) {
+                // なければ新しく作って追加する
+                m_programs.push_back(std::make_unique<RGYTSDemuxProgram>());
+                program = m_programs.back().get();
+                program->pmt_pid = *pmt_pid;
+            }
+            parsePMT(program, pkt->payload(), packetHeader.payloadSize, packetHeader.PayloadStartFlag, packetHeader.Counter);
+            result.type = RGYTSPacketType::PMT;
+            result.psi = std::make_unique<RGYTS_PSI>(program->pmtPsi);
+            result.programNumber = program->pmt_pid.program_number;
 
-        parsePMT(program, pkt->payload(), packetHeader.payloadSize, packetHeader.PayloadStartFlag, packetHeader.Counter);
-        result.type = RGYTSPacketType::PMT;
-        result.psi = std::make_unique<RGYTS_PSI>(program->pmtPsi);
-        return { RGY_ERR_NONE, std::move(result) };
+            // 対象のserviceであるかを確認する
+            auto pmt_pid = selectServiceID();
+            if (pmt_pid && pmt_pid->pmt_pid == program->pmt_pid.pmt_pid) {
+                m_targetService = &program->service;
+            }
+            return { RGY_ERR_NONE, std::move(result) };
+        }
     }
 
     result.type = RGYTSPacketType::OTHER;

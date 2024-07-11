@@ -1777,8 +1777,7 @@ RGY_ERR TSReplace::restruct() {
             if (err != RGY_ERR_NONE) {
                 return err;
             }
-            switch (ret.type) {
-            case RGYTSPacketType::PAT:
+            if (ret.type == RGYTSPacketType::PAT) {
                 pat = m_demuxer->pat();
                 writePacket(tspkt.get());
                 if (pmtResult) {
@@ -1791,65 +1790,70 @@ RGY_ERR TSReplace::restruct() {
                         }
                     }
                 }
-                break;
-            case RGYTSPacketType::PMT:
-                service = m_demuxer->service();
-                if (tspkt->header.PayloadStartFlag) {
-                    writeReplacedPMT(ret);
-                }
-                break;
-            case RGYTSPacketType::PCR: {
-                const auto pcr = m_demuxer->pcr();
-                if (pcr != TIMESTAMP_INVALID_VALUE) {
-                    if (m_pcr == TIMESTAMP_INVALID_VALUE) {
-                        AddMessage(RGY_LOG_INFO, _T("First PCR:           %11lld\n"), pcr);
-                    } else if (pcr < m_pcr) {
-                        AddMessage(RGY_LOG_WARN, _T("PCR less than lastPCR: PCR %11lld, lastPCR %11lld\n"), pcr, m_pcr);
-                    }
-                }
-                m_pcr = pcr;
-                if (pat) {
-                    if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
-                        return err;
-                    }
-                }
-                writePacket(tspkt.get());
-                break; }
-            case RGYTSPacketType::VID:
-                if (tspkt->header.PayloadStartFlag) {
-                    m_vidPTS = ret.pts;
-                    m_vidDTS = ret.dts;
-                    if (m_vidFirstFramePTS == TIMESTAMP_INVALID_VALUE) {
-                        m_vidFirstFramePTS = m_vidPTS;
-                        //AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstFramePTS);
-                    }
-                    if (m_vidFirstFrameDTS == TIMESTAMP_INVALID_VALUE) {
-                        m_vidFirstFrameDTS = m_vidDTS;
-                        //AddMessage(RGY_LOG_DEBUG, _T("First Video DTS:     %11lld\n"), m_vidFirstFrameDTS);
-                    }
-                    if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
-                        const auto startPoint = getStartPointPTS();
-                        if (startPoint <= m_vidPTS) {
-                            m_vidDTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
+            } else {
+                // 対象のサービスの場合のみ、置換処理等を行う
+                if (m_demuxer->isPIDTargetService(tspkt->header.PID)) {
+                    switch (ret.type) {
+                    case RGYTSPacketType::PMT:
+                        service = m_demuxer->service();
+                        if (tspkt->header.PayloadStartFlag) {
+                            writeReplacedPMT(ret);
                         }
+                        break;
+                    case RGYTSPacketType::PCR: {
+                        const auto pcr = m_demuxer->pcr();
+                        if (pcr != TIMESTAMP_INVALID_VALUE) {
+                            if (m_pcr == TIMESTAMP_INVALID_VALUE) {
+                                AddMessage(RGY_LOG_INFO, _T("First PCR:           %11lld\n"), pcr);
+                            } else if (pcr < m_pcr) {
+                                AddMessage(RGY_LOG_WARN, _T("PCR less than lastPCR: PCR %11lld, lastPCR %11lld\n"), pcr, m_pcr);
+                            }
+                        }
+                        m_pcr = pcr;
+                        if (pat) {
+                            if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
+                                return err;
+                            }
+                        }
+                        writePacket(tspkt.get());
+                        break;
                     }
-                }
-                break;
-            case RGYTSPacketType::OTHER: {
-                bool output = true;
-                if (m_removeTypeD && ret.stream.type == RGYTSStreamType::TYPE_D) {
-                    output = false;
-                }
-                if (m_targetService != 0 && ret.stream.pid == 0) {
-                    output = false;
-                }
-                if (output) {
+                    case RGYTSPacketType::VID:
+                        if (tspkt->header.PayloadStartFlag) {
+                            m_vidPTS = ret.pts;
+                            m_vidDTS = ret.dts;
+                            if (m_vidFirstFramePTS == TIMESTAMP_INVALID_VALUE) {
+                                m_vidFirstFramePTS = m_vidPTS;
+                                //AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstFramePTS);
+                            }
+                            if (m_vidFirstFrameDTS == TIMESTAMP_INVALID_VALUE) {
+                                m_vidFirstFrameDTS = m_vidDTS;
+                                //AddMessage(RGY_LOG_DEBUG, _T("First Video DTS:     %11lld\n"), m_vidFirstFrameDTS);
+                            }
+                            if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
+                                const auto startPoint = getStartPointPTS();
+                                if (startPoint <= m_vidPTS) {
+                                    m_vidDTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
+                                }
+                            }
+                        }
+                        break;
+                    case RGYTSPacketType::OTHER: {
+                        bool output = true;
+                        if (m_removeTypeD && ret.stream.type == RGYTSStreamType::TYPE_D) {
+                            output = false;
+                        }
+                        if (output) {
+                            writePacket(tspkt.get());
+                        }
+                        break;
+                    }
+                    default:
+                        break;
+                    }
+                } else {
                     writePacket(tspkt.get());
                 }
-                break;
-            }
-            default:
-                break;
             }
         }
         tsPackets.clear();
