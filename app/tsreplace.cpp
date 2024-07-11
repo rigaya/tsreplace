@@ -407,7 +407,7 @@ RGYTSStreamType TSReplaceVideo::getVideoStreamType() const {
     return RGYTSStreamType::UNKNOWN;
 }
 
-RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, RGYQueueBuffer *inputQueue, const tstring& inputFormat) {
+RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, RGYQueueBuffer *inputQueue, const tstring& inputFormat, const int vidStreamID) {
     if (!check_avcodec_dll()) {
         AddMessage(RGY_LOG_ERROR, error_mes_avcodec_dll_not_found());
         return RGY_ERR_NULL_PTR;
@@ -504,9 +504,19 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, RGYQueueBuffer *i
     }
 
     m_Demux.video.index = videoStreams.front();
+    if (vidStreamID) {
+        const auto streamIndexFound = std::find_if(videoStreams.begin(), videoStreams.end(), [formatCtx = m_Demux.format.formatCtx.get(), nSearchId = vidStreamID](int nStreamIndex) {
+            return (formatCtx->streams[nStreamIndex]->id == nSearchId);
+            });
+        if (streamIndexFound == videoStreams.end()) {
+            AddMessage(RGY_LOG_ERROR, _T("stream id %d (0x%x) not found in video tracks.\n"), vidStreamID, vidStreamID);
+            return RGY_ERR_INVALID_VIDEO_PARAM;
+        }
+        m_Demux.video.index = *streamIndexFound;
+    }
     m_Demux.video.stream = m_Demux.format.formatCtx->streams[m_Demux.video.index];
-    AddMessage(RGY_LOG_INFO, _T("Opened video stream #%d, %s, %dx%d (%s), stream time_base %d/%d, codec_timebase %d/%d.\n"),
-        m_Demux.video.stream->index,
+    AddMessage(RGY_LOG_INFO, _T("Opened video stream #%d (ID %d (0x%x)), %s, %dx%d (%s), stream time_base %d/%d, codec_timebase %d/%d.\n"),
+        m_Demux.video.stream->index, m_Demux.video.stream->id, m_Demux.video.stream->id,
         char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str(),
         m_Demux.video.stream->codecpar->width, m_Demux.video.stream->codecpar->height,
         char_to_tstring(av_pix_fmt_desc_get((AVPixelFormat)m_Demux.video.stream->codecpar->format)->name).c_str(),
@@ -1097,7 +1107,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_replaceFileFormat = prms.replacefileformat;
     if (prms.replacefile.length() > 0) {
         m_videoReplace = std::make_unique<TSReplaceVideo>(log);
-        if (auto sts = m_videoReplace->initAVReader(prms.replacefile, nullptr, prms.replacefileformat); sts != RGY_ERR_NONE) {
+        if (auto sts = m_videoReplace->initAVReader(prms.replacefile, nullptr, prms.replacefileformat, 0); sts != RGY_ERR_NONE) {
             return sts;
         }
 
@@ -1588,7 +1598,7 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     // 映像の先頭の時刻を検出
     AddMessage(RGY_LOG_DEBUG, _T("Start input ts preanalysis.\n"));
     auto originalTS = std::make_unique<TSReplaceVideo>(m_log);
-    auto sts = originalTS->initAVReader(_T(""), m_queueInputPreAnalysis.get(), _T("mpegts"));
+    auto sts = originalTS->initAVReader(_T(""), m_queueInputPreAnalysis.get(), _T("mpegts"), m_vidPIDReplace);
     if (sts != RGY_ERR_NONE) {
         return sts;
     }
@@ -1705,7 +1715,7 @@ RGY_ERR TSReplace::initEncoder() {
 
     AddMessage(RGY_LOG_DEBUG, _T("Create demuxer to demux data from encoder.\n"));
     m_videoReplace = std::make_unique<TSReplaceVideo>(m_log);
-    if (auto sts = m_videoReplace->initAVReader(_T(""), m_encQueueOut.get(), m_replaceFileFormat); sts != RGY_ERR_NONE) {
+    if (auto sts = m_videoReplace->initAVReader(_T(""), m_encQueueOut.get(), m_replaceFileFormat, 0); sts != RGY_ERR_NONE) {
         return sts;
     }
     const auto streamID = m_videoReplace->getVideoStreamType();

@@ -129,7 +129,7 @@ public:
     TSReplaceVideo(std::shared_ptr<RGYLog> log);
     virtual ~TSReplaceVideo();
     std::vector<int> getAVReaderStreamIndex(AVMediaType type);
-    RGY_ERR initAVReader(const tstring& videofile, RGYQueueBuffer *inputQueue, const tstring& inputFormat);
+    RGY_ERR initAVReader(const tstring& videofile, RGYQueueBuffer *inputQueue, const tstring& inputFormat, const int vidStreamID);
     std::tuple<int, std::unique_ptr<AVPacket, RGYAVDeleter<AVPacket>>> getSample();
     RGYTSStreamType getVideoStreamType() const;
 
