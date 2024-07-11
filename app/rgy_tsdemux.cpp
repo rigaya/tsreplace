@@ -342,7 +342,7 @@ void RGYTSDemuxer::parsePMT(RGYTSDemuxProgram *program) {
             service.pidList[i].pid != service.aud1.stream.pid &&
             service.pidList[i].pid != service.cap.stream.pid &&
             service.pidList[i].pid != service.pidPcr) {
-            AddMessage(loglevel, _T("  pid      0x%04x (type=%d)\n"), service.pidList[i].pid, service.pidList[i].type);
+            AddMessage(loglevel, _T("  pid      0x%04x (%d) (type=%d)\n"), service.pidList[i].pid, service.pidList[i].pid, service.pidList[i].type);
         }
     }
 }
