@@ -10,6 +10,7 @@ tsの映像部分のみの置き換えを行い、サイズの圧縮を図るツ
 - [想定動作環境](#想定動作環境)
 - [基本的な使用方法](#基本的な使用方法)
 - [エンコードしながら置き換える](#エンコードしながら置き換える)
+- [追加オプション](#追加オプション)
 - [具体的な使用例](#具体的な使用例)
 - [具体的な使用例 (インタレ保持)](#具体的な使用例-インタレ保持)
 - [オプション](#オプション)
@@ -25,6 +26,8 @@ Windows 10/11 (x86/x64)
 ### Linux
 Ubuntu 20.04 - 24.04 (x64) ほか
 
+---
+
 ## 基本的な使用方法
 
 tsreplaceを使用するには、コマンドラインから直接使用する方法と、[Amatsukaze(GUI)](https://github.com/rigaya/Amatsukaze)から使用する方法が存在します。ここでは、コマンドラインから直接使用する方法を記載します。
@@ -38,7 +41,7 @@ tsreplaceを使用するには、コマンドラインから直接使用する�
 `tsreplace.exe -i <入力tsファイル> -r <置き換え映像ファイル> -o <出力tsファイル>`
 
 ## エンコードしながら置き換える
-下記のように、2段階に分けずエンコードしながら置き換えを行うこともできます。**この場合、Powershellを使用するとPowershell側のパイプ渡しの問題でうまく動作しないため、コマンドプロンプトをご利用ください。**
+下記のように、2段階に分けずエンコードしながら置き換えを行うこともできます。
 
 ### tsreplaceでエンコーダを起動する方法
 
@@ -52,10 +55,23 @@ tsreplaceの```--encoder```オプションで指定のパスのエンコーダ�
 
 ### 置き換え映像ファイルを標準入力で受け取る方法
 
-置き換え映像ファイルを下記のように標準入力で受け取ることもできます。
+置き換え映像ファイルを下記のように標準入力で受け取ることもできます。**この場合、Powershellを使用するとPowershell側のパイプ渡しの問題でうまく動作しないため、コマンドプロンプトをご利用ください。**
 
 `QSVEncC64.exe -i <入力tsファイル> [インタレ解除等他のオプション] --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
 
+---
+
+## 追加オプション
+
+- 置き換えるサービスを指定する
+
+  全サービスを録画しているtsファイルを対象にする場合、```--service <int>``` で処理するサービスIDを指定することができます。
+
+- データ放送を削除してさらに圧縮する
+
+  データ放送のパケットも含まれるtsファイルを対象にする場合、データサイズに占める割合が比較的大きいことがあります。データ放送が不要な場合には```--remove-typed```オプションを追加すると、データ放送のパケットを削除することができます。
+
+---
 
 ## 具体的な使用例
 
@@ -63,35 +79,35 @@ tsreplaceの```--encoder```オプションで指定のパスのエンコーダ�
 
 ### ハードウェアエンコード
 
-#### Intel QSV
+- Intel QSV
 
-QSVを使用する場合、[QSVEncC](https://github.com/rigaya/QSVEnc)を使用します。
+  QSVを使用する場合、[QSVEncC](https://github.com/rigaya/QSVEnc)を使用します。
 
-- H.264 エンコード  
-  `QSVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c h264 --icq 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
+  - H.264 エンコード  
+    `QSVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c h264 --icq 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
 
-- HEVC エンコード  
-  `QSVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c hevc --icq 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
+  - HEVC エンコード  
+    `QSVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c hevc --icq 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
 
-#### NVENC
+- NVENC
 
-NVENCを使用する場合、[NVEncC](https://github.com/rigaya/NVEnc)を使用します。
+  NVENCを使用する場合、[NVEncC](https://github.com/rigaya/NVEnc)を使用します。
 
-- H.264 エンコード  
-  `NVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c h264 --qvbr 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
+  - H.264 エンコード  
+    `NVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c h264 --qvbr 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
 
-- HEVC エンコード  
-  `NVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c hevc --qvbr 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
+  - HEVC エンコード  
+    `NVEncC64.exe -i <入力tsファイル> --tff --vpp-deinterlace normal -c hevc --qvbr 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
 
 ### ソフトウェアエンコード
 
 ソフトウェアエンコードを使用する場合、ffmpegを用います。
 
-#### x264
+- x264
 
   `ffmpeg.exe -y -i <入力tsファイル> -copyts -start_at_zero -vf yadif -an -c:v libx264 -preset slow -crf 23 -g 90 -f mpegts - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
 
-#### x265
+- x265
 
   `ffmpeg.exe -y -i <入力tsファイル> -copyts -start_at_zero -vf yadif -an -c:v libx265 -preset medium -crf 23 -g 90 -f mpegts - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
 
@@ -103,13 +119,13 @@ NVENCを使用する場合、[NVEncC](https://github.com/rigaya/NVEnc)を使用�
 
 ハードウェアエンコードの場合、インタレ保持に対応したハードウェアが必要です。
 
-#### Intel QSV
+- Intel QSV
 
   インタレ保持にはPGモードの使用可能なGPUが必要です。(Arc GPUでは使用できません)
 
   `QSVEncC64.exe -i <入力tsファイル> --tff -c h264 --icq 23 --gop-len 90 --output-format mpegts -o - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
   
-#### NVENC
+- NVENC
 
   インタレ保持にはGTX1xxx以前のGPUが必要です。
 
@@ -117,8 +133,11 @@ NVENCを使用する場合、[NVEncC](https://github.com/rigaya/NVEnc)を使用�
 
 ### ソフトウェアエンコード
 
+- x264
+
   `ffmpeg.exe -y -i <入力tsファイル> -copyts -start_at_zero -an -c:v libx264 -flags +ildct+ilme -preset slow -crf 23 -g 90 -f mpegts - | tsreplace.exe -i <入力tsファイル> -r - -o <出力tsファイル>`
 
+---
 
 ## オプション
 
@@ -173,6 +192,8 @@ timestampを保持できるコンテナ入りの映像を想定しており、ra
 データ放送のパケットを削除し、さらなる圧縮を図ります。(デフォルト：オフ)
 
 具体的には、データ放送で使用されているISO/IEC 13818-6 type DのPIDストリームのパケットを削除します。
+
+---
 
 ## 制限事項
 
