@@ -134,6 +134,7 @@ public:
     void resetPSICache();
     bool isPIDTargetService(const int pid) const;
 protected:
+    void checkPMTList();
     RGYTSDemuxProgram *selectProgramFromPMTPID(const int pmt_pid);
     RGYTSDemuxProgram *selectProgramFromPID(const int pid);
     const RGYTS_PMT_PID *selectServiceID(const int serviceID);

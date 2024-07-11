@@ -186,11 +186,17 @@ std::unique_ptr<RGYTS_PAT> RGYTSDemuxer::parsePAT(const uint8_t *payload, const 
                 pmt.pmt_pid = read16(ptr + 2) & 0x1fff;
                 pmt.program_number = read16(ptr);
 
-                AddMessage(RGY_LOG_DEBUG, _T("  program_number(service_id) %6d, pmt_pid 0x%04x\n"),
-                    pmt.program_number, pmt.pmt_pid);
+                AddMessage(RGY_LOG_TRACE, _T("  program_number(service_id) %6d, pmt_pid 0x%04x (%d)\n"),
+                    pmt.program_number, pmt.pmt_pid, pmt.pmt_pid);
 
                 pat->pmt.push_back(pmt);
                 ptr += 4;
+            }
+            if (!m_pat && pat) {
+                for (const auto& p : pat->pmt) {
+                    AddMessage(RGY_LOG_INFO, _T("program_number(service_id) %6d, pmt_pid 0x%04x (%d)\n"),
+                        p.program_number, p.pmt_pid, p.pmt_pid);
+                }
             }
             return pat;
         }
@@ -507,6 +513,43 @@ RGYTSDemuxProgram *RGYTSDemuxer::selectProgramFromPID(const int pid) {
     return nullptr;
 }
 
+void RGYTSDemuxer::checkPMTList() {
+    if (m_pat->pmt.size() == m_programs.size()) {
+        // m_pat->pmt の並びとm_programsの並びが一致しているかを確認する
+        bool match_ok = true;
+        for (size_t i = 0; i < m_pat->pmt.size(); i++) {
+            const auto& program = m_programs[i];
+            if (m_programs[i]->pmt_pid.pmt_pid != m_pat->pmt[i].pmt_pid
+                || m_programs[i]->pmt_pid.program_number != m_pat->pmt[i].program_number) {
+                match_ok = false;
+                break;
+            }
+        }
+        if (match_ok) {
+            return; // 一致していれば終了
+        }
+    }
+    // 一致していない場合、m_pat->pmtの並びに合わせてm_programsを再構築する
+    auto program_tmp = std::move(m_programs);
+    m_programs.resize(m_pat->pmt.size());
+
+    for (size_t i = 0; i < m_pat->pmt.size(); i++) {
+        bool found = false;
+        for (auto& program : program_tmp) {
+            if (program->pmt_pid.pmt_pid == m_pat->pmt[i].pmt_pid
+                && program->pmt_pid.program_number == m_pat->pmt[i].program_number) {
+                m_programs[i] = std::move(program);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            m_programs[i] = std::make_unique<RGYTSDemuxProgram>();
+            m_programs[i]->pmt_pid = m_pat->pmt[i];
+        }
+    }
+}
+
 std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt) {
     RGYTSDemuxResult result;
     const auto& packetHeader = pkt->header;
@@ -514,6 +557,7 @@ std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt
     // PAT
     if (packetHeader.PID == 0x00) {
         m_pat = parsePAT(pkt->payload(), packetHeader.payloadSize, packetHeader.PayloadStartFlag, packetHeader.Counter);
+        checkPMTList();
         result.type = RGYTSPacketType::PAT;
         return { RGY_ERR_NONE, std::move(result) };
     }
