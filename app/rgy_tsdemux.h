@@ -102,12 +102,21 @@ enum class RGYTSPacketType {
 struct RGYTSDemuxResult {
     RGYTSPacketType type;
     RGYTSStreamInfo stream;
+    int programNumber;
     int64_t pts;
     int64_t dts;
     std::unique_ptr<RGYTSPESHeader> pesHeader;
     std::unique_ptr<RGYTS_PSI> psi;
 
     RGYTSDemuxResult();
+};
+
+struct RGYTSDemuxProgram {
+    RGYTS_PMT_PID pmt_pid;
+    RGYService service;
+    RGYTS_PSI pmtPsi; // PMT抽出用領域
+
+    RGYTSDemuxProgram();
 };
 
 class RGYTSDemuxer {
@@ -119,17 +128,20 @@ public:
 
     const RGYTS_PAT* pat() const { return m_pat.get(); }
     const int64_t pcr() const { return m_pcr; }
-    const RGYService *service() const { return m_service.programNumber > 0 ? &m_service : nullptr; }
+    const RGYService *service() const { return m_targetService; }
     const RGYTS_PMT_PID *selectServiceID();
     void resetPCR();
     void resetPSICache();
+    bool isPIDTargetService(const int pid) const;
 protected:
+    RGYTSDemuxProgram *selectProgramFromPMTPID(const int pmt_pid);
+    RGYTSDemuxProgram *selectProgramFromPID(const int pid);
     const RGYTS_PMT_PID *selectServiceID(const int serviceID);
     int parsePSI(RGYTS_PSI *psi, const uint8_t *ptr, const int payloadSize, const int unitStart, const int counter);
     std::unique_ptr<RGYTS_PAT> parsePAT(const uint8_t *ptr, const int payloadSize, const int unitStart, const int counter);
 
-    void parsePMT(const uint8_t *payload, const int payloadSize, const int unitStart, const int counter);
-    void parsePMT(const RGYTS_PSI *psi);
+    void parsePMT(RGYTSDemuxProgram *program, const uint8_t *payload, const int payloadSize, const int unitStart, const int counter);
+    void parsePMT(RGYTSDemuxProgram *program);
     int64_t parsePCR(const RGYTSPacketHeader& packetHeader, const uint8_t *packet);
     int64_t packetPTS(const uint8_t *packet);
     int64_t parsePESPTS(const uint8_t *ptr);
@@ -169,9 +181,9 @@ protected:
 
     std::shared_ptr<RGYLog> m_log;
     std::unique_ptr<RGYTS_PAT> m_pat;
-    RGYTS_PSI m_patPsi;
-    RGYTS_PSI m_pmtPsi;
-    RGYService m_service;
+    RGYTS_PSI m_patPsi; // PAT抽出用領域
+    std::vector<std::unique_ptr<RGYTSDemuxProgram>> m_programs;
+    RGYService *m_targetService;
     int64_t m_pcr;
 };
 
