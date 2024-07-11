@@ -1638,19 +1638,56 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     return RGY_ERR_NONE;
 }
 
+bool TSReplace::isHWEncC() {
+    auto encoder = createRGYPipeProcess();
+    encoder->init(PIPE_MODE_DISABLE, PIPE_MODE_ENABLE, PIPE_MODE_ENABLE | PIPE_MODE_MUXED);
+
+    auto args = std::vector<tstring>{ m_encoderPath, _T("--version") };
+
+    AddMessage(RGY_LOG_INFO, _T("Run encoder: %s --version\n"), m_encoderPath.c_str());
+    if (encoder->run(args, nullptr, 0, false, false)) {
+        AddMessage(RGY_LOG_ERROR, _T("Failed to run \"%s\".\n"), m_encoderPath.c_str());
+        return false;
+    }
+    auto output = encoder->getOutput();
+    // output の1行目を取得
+    if (auto linedndpos = output.find_first_of("\n"); linedndpos != std::string::npos) {
+        output = output.substr(0, linedndpos);
+    }
+    // output に "QSVEnc", "NVEnc", "VCEEnc", "rkmppenc" が含まれていればHWエンコーダー
+    if (output.find("QSVEnc") != std::string::npos) {
+        return true;
+    }
+    if (output.find("NVEnc") != std::string::npos) {
+        return true;
+    }
+    if (output.find("VCEEnc") != std::string::npos) {
+        return true;
+    }
+    if (output.find("rkmppenc") != std::string::npos) {
+        return true;
+    }
+    return false;
+}
+
 RGY_ERR TSReplace::initEncoder() {
     m_encoder = createRGYPipeProcess();
     m_encoder->init(PIPE_MODE_ENABLE | PIPE_MODE_ENABLE_FP, PIPE_MODE_ENABLE, PIPE_MODE_ENABLE);
 
-    std::vector<tstring> args;
-    args.push_back(m_encoderPath);
+    std::vector<tstring> args = m_encoderArgs;
     vector_cat(args, m_encoderArgs);
+    if (m_vidPIDReplace && isHWEncC()) {
+        args.push_back(_T("--video-streamid"));
+        args.push_back(strsprintf(_T("%d"), m_vidPIDReplace));
+    }
 
     tstring optionstr;
-    for (const auto& arg : m_encoderArgs) {
+    for (const auto& arg : args) {
         optionstr += arg;
         optionstr += _T(" ");
     }
+
+    args.insert(args.begin(), m_encoderPath);
     AddMessage(RGY_LOG_INFO, _T("Run encoder: %s %s\n"), m_encoderPath.c_str(), optionstr.c_str());
     if (m_encoder->run(args, nullptr, 0, false, false)) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to run \"%s\".\n"), m_encoderPath.c_str());

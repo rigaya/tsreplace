@@ -222,6 +222,7 @@ public:
     void close();
 protected:
     RGY_ERR initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets);
+    bool isHWEncC();
     RGY_ERR initEncoder();
     RGY_ERR readTS(std::vector<uniqueRGYTSPacket>& packetBuffer);
     RGY_ERR writePacket(const RGYTSPacket *pkt);
