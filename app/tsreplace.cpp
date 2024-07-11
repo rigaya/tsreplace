@@ -1650,21 +1650,15 @@ bool TSReplace::isHWEncC() {
         return false;
     }
     auto output = encoder->getOutput();
-    // output の1行目を取得
+    // outputの1行目を取得
     if (auto linedndpos = output.find_first_of("\n"); linedndpos != std::string::npos) {
         output = output.substr(0, linedndpos);
     }
-    // output に "QSVEnc", "NVEnc", "VCEEnc", "rkmppenc" が含まれていればHWエンコーダー
-    if (output.find("QSVEnc") != std::string::npos) {
-        return true;
-    }
-    if (output.find("NVEnc") != std::string::npos) {
-        return true;
-    }
-    if (output.find("VCEEnc") != std::string::npos) {
-        return true;
-    }
-    if (output.find("rkmppenc") != std::string::npos) {
+    // outputに "QSVEnc", "NVEnc", "VCEEnc", "rkmppenc" が含まれていればHWエンコーダー
+    if (   output.find("QSVEnc")   != std::string::npos
+        || output.find("NVEnc")    != std::string::npos
+        || output.find("VCEEnc")   != std::string::npos
+        || output.find("rkmppenc") != std::string::npos) {
         return true;
     }
     return false;
@@ -1934,7 +1928,11 @@ static void show_help() {
         _T("         args after \"--encoder\" will be passed to encoder\n")
         _T("         which input should be stdin and output should be stdout\n")
         _T("\n")
-        _T("-s,--service <int>              set service id to replace\n")
+        _T("-s,--service <int> or <string>  set service replace\n")
+        _T("                                 <int>     set service id\n");
+        _T("                                 <string>  1st, 2nd, 3rd, ...\n");
+        _T("                                            select by service order in PAT\n");
+        _T("\n")
         _T("   --preserve-other-services    preserve packets of not selected service(s)\n")
         _T("\n")
         _T("   --start-point <string>       set start point\n")
@@ -2117,6 +2115,13 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
     }
     if (IS_OPTION("service")) {
         i++;
+        static const TCHAR *serviceNum[] = {_T(""), _T("1st"), _T("2nd"), _T("3rd"), _T("4th"), _T("5th"), _T("6th"), _T("7th"), _T("8th"), _T("9th")};
+        for (int i = 1; i < (int)_countof(serviceNum); i++) {
+            if (_tcsicmp(strInput[i], serviceNum[i]) == 0) {
+                prm.selectService = -1 * i;
+                return 0;
+            }
+        }
         if (strInput[i][0] == _T('0') && strInput[i][1] == _T('x')) {
             try {
                 prm.selectService = std::stoi(strInput[i], nullptr, 16);
