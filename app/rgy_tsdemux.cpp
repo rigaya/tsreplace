@@ -486,6 +486,18 @@ const RGYTS_PMT_PID *RGYTSDemuxer::selectServiceID(const int serviceID) {
             }
         }
     }
+    if (serviceID < 0) {
+        const int selectIndex = -serviceID;
+        int idx = 0;
+        for (const auto& pmt : m_pat->pmt) {
+            if (pmt.program_number != 0) {
+                idx++;
+                if (idx == selectIndex) {
+                    return &pmt;
+                }
+            }
+        }
+    }
     for (size_t i = 0; i < m_pat->pmt.size(); i++) {
         if (m_pat->pmt[i].program_number != 0) {
             return &m_pat->pmt[i];
