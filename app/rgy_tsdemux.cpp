@@ -595,16 +595,19 @@ std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt
     }
 
     result.type = RGYTSPacketType::OTHER;
-    result.stream.pid = 0;
-    result.stream.type = RGYTSStreamType::UNKNOWN;
-    if (m_targetService) {
-        for (auto& st : m_targetService->pidList) {
+    // PIDからどのserviceか検索する
+    auto service = selectProgramFromPID(packetHeader.PID);
+    if (service) {
+        // 見つかったらprogramNumberを設定する
+        result.programNumber = service->pmt_pid.program_number;
+        // stream_typeも設定
+        for (const auto& st : service->service.pidList) {
             if (packetHeader.PID == st.pid) {
                 result.stream = st;
                 break;
             }
         }
-        if (packetHeader.PID == m_targetService->pidPcr) {
+        if (packetHeader.PID == service->service.pidPcr) {
             const auto pcr = parsePCR(packetHeader, pkt->data());
             if (pcr != TIMESTAMP_INVALID_VALUE) {
                 m_pcr = pcr;
@@ -612,27 +615,27 @@ std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt
             result.type = RGYTSPacketType::PCR;
             result.pts = pcr;
             AddMessage((pcr != TIMESTAMP_INVALID_VALUE) ? RGY_LOG_TRACE : RGY_LOG_WARN,
-                _T("  pid pcr  0x%04x, %lld\n"), m_targetService->pidPcr, pcr);
-        } else if (packetHeader.PID == m_targetService->vid.stream.pid) {
+                _T("  pid pcr  0x%04x, %lld\n"), service->service.pidPcr, pcr);
+        } else if (packetHeader.PID == service->service.vid.stream.pid) {
             result.type = RGYTSPacketType::VID;
             if (packetHeader.PayloadStartFlag) {
                 auto pes = parsePESHeader(pkt->packet);
                 AddMessage(RGY_LOG_TRACE, _T("  pid vid  0x%04x, %s, %4d, %lld, %lld\n"),
-                    m_targetService->vid.stream.pid, packetHeader.adapt.random_access ? _T("K") : _T("_"), packetHeader.payloadSize, pes.pts, pes.dts);
+                    service->service.vid.stream.pid, packetHeader.adapt.random_access ? _T("K") : _T("_"), packetHeader.payloadSize, pes.pts, pes.dts);
                 result.pts = pes.pts;
                 result.dts = pes.dts;
             }
-        } else if (packetHeader.PID == m_targetService->aud0.stream.pid) {
+        } else if (packetHeader.PID == service->service.aud0.stream.pid) {
             if (packetHeader.PayloadStartFlag) {
                 auto pes = parsePESHeader(pkt->packet);
-                AddMessage(RGY_LOG_TRACE, _T("  pid aud0 0x%04x, %lld\n"), m_targetService->vid.stream.pid, pes.pts);
+                AddMessage(RGY_LOG_TRACE, _T("  pid aud0 0x%04x, %lld\n"), service->service.vid.stream.pid, pes.pts);
                 result.pts = pes.pts;
                 result.dts = pes.dts;
             }
-        } else if (packetHeader.PID == m_targetService->cap.stream.pid) {
+        } else if (packetHeader.PID == service->service.cap.stream.pid) {
             if (packetHeader.PayloadStartFlag) {
                 auto pes = parsePESHeader(pkt->packet);
-                AddMessage(RGY_LOG_TRACE, _T("  pid cap  0x%04x, %lld\n"), m_targetService->vid.stream.pid, pes.pts);
+                AddMessage(RGY_LOG_TRACE, _T("  pid cap  0x%04x, %lld\n"), service->service.vid.stream.pid, pes.pts);
                 result.pts = pes.pts;
                 result.dts = pes.dts;
             }
