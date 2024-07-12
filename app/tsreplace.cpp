@@ -1669,7 +1669,6 @@ RGY_ERR TSReplace::initEncoder() {
     m_encoder->init(PIPE_MODE_ENABLE | PIPE_MODE_ENABLE_FP, PIPE_MODE_ENABLE, PIPE_MODE_ENABLE);
 
     std::vector<tstring> args = m_encoderArgs;
-    vector_cat(args, m_encoderArgs);
     if (m_vidPIDReplace && isHWEncC()) {
         args.push_back(_T("--video-streamid"));
         args.push_back(strsprintf(_T("%d"), m_vidPIDReplace));
