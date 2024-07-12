@@ -167,7 +167,7 @@ int RGYPipeProcessLinux::stdInFpClose() {
     if (m_pipe.stdIn.fp) {
         ret = fclose(m_pipe.stdIn.fp);
         m_pipe.stdIn.fp = nullptr;
-        m_pipe.stdIn.h_write = nullptr;
+        m_pipe.stdIn.h_write = 0;
     }
     return ret;
 }
@@ -218,7 +218,7 @@ int RGYPipeProcessLinux::stdOutFpClose() {
     if (m_pipe.stdOut.fp) {
         ret = fclose(m_pipe.stdOut.fp);
         m_pipe.stdOut.fp = nullptr;
-        m_pipe.stdOut.h_read = nullptr;
+        m_pipe.stdOut.h_read = 0;
     }
     return ret;
 }
@@ -232,7 +232,7 @@ int RGYPipeProcessLinux::stdErrFpClose() {
     if (m_pipe.stdErr.fp) {
         ret = fclose(m_pipe.stdErr.fp);
         m_pipe.stdErr.fp = nullptr;
-        m_pipe.stdErr.h_read = nullptr;
+        m_pipe.stdErr.h_read = 0;
     }
     return ret;
 }
