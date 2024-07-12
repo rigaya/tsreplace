@@ -1888,7 +1888,7 @@ RGY_ERR TSReplace::restruct() {
                 // 以下、サービス外のパケットか、対象のサービスでないパケット
                 } else if (m_removeTypeD && ret.programNumber > 0 && ret.stream.type == RGYTSStreamType::TYPE_D) {
                     // データ放送の削除 -> 出力しない
-                } else if (m_removeNonTargetService && m_selectService && ret.programNumber > 0) {
+                } else if (m_removeNonTargetService && ret.programNumber > 0) {
                     // 対象サービスでない、他のサービスに属するパケットの場合(ret.programNumber > 0)、そのパケットは削除する -> 出力しない
                 } else {
                     writePacket(tspkt.get());
