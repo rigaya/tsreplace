@@ -1922,7 +1922,7 @@ static void show_help() {
         _T("-o,--output <filename>          set output ts filename\n")
         _T("-i,--input <filename>           set input ts filename\n")
         _T("-r,--replace <filename>         set input video filename\n")
-        _T("   --encoder <encoder path> <encoder args>\n")
+        _T("-e,--encoder <encoder path> <encoder args>\n")
         _T("         can be used instead of \"-r\"\n")
         _T("         args after \"--encoder\" will be passed to encoder\n")
         _T("         which input should be stdin and output should be stdout\n")
@@ -2032,6 +2032,9 @@ const TCHAR *cmd_short_opt_to_long(TCHAR short_opt) {
         break;
     case _T('r'):
         option_name = _T("replace");
+        break;
+    case _T('e'):
+        option_name = _T("encoder");
         break;
     case _T('s'):
         option_name = _T("service");
