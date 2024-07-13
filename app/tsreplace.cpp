@@ -1661,7 +1661,7 @@ TSReplace::EncoderType TSReplace::getEncoderType() {
         || output.find("rkmppenc") != std::string::npos) {
         return EncoderType::HWEncC;
     }
-    if (output.find("ffmpeg") != std::string::npos && output.find("version") != std::string::npos) {
+    if (output.find("ffmpeg version") != std::string::npos) {
         return EncoderType::ffmpeg;
     }
     return EncoderType::Unknwon;
@@ -1679,12 +1679,15 @@ RGY_ERR TSReplace::initEncoder() {
         if (encoderType == EncoderType::HWEncC) {
             args.push_back(_T("--video-streamid"));
             args.push_back(strsprintf(_T("%d"), m_vidPIDReplace));
-        } else if (encoderType == EncoderType::ffmpeg) {
-            // args の中に -i がある場合、その次に追加する
-            auto it = std::find(args.begin(), args.end(), _T("-i"));
-            if (it != args.end() && (it + 1) != args.end()) {
-                std::vector<tstring> map = { _T("-map"), strsprintf(_T("0:p:%d:0"), m_vidPIDReplace) };
-                args.insert(it + 2, map.begin(), map.end());
+        } else if (encoderType == EncoderType::ffmpeg && m_demuxer) {
+            auto service = m_demuxer->service();
+            if (service && service->programNumber != 0) {
+                // args の中に -i がある場合、その次に追加する
+                auto it = std::find(args.begin(), args.end(), _T("-i"));
+                if (it != args.end() && (it + 1) != args.end()) {
+                    std::vector<tstring> map = { _T("-map"), strsprintf(_T("0:p:%d:0"), service->programNumber) };
+                    args.insert(it + 2, map.begin(), map.end());
+                }
             }
         }
     }
