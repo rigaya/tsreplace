@@ -242,7 +242,7 @@ tstring RGYPipeProcessLinux::getOutput() {
     auto read_from_pipe = [&]() {
         char read_buf[4096];
         int ret = (int)read(m_pipe.stdOut.h_read, read_buf, _countof(read_buf));
-        if (ret == -1) return -1;
+        if (ret <= 0) return -1;
         outstr += std::string(read_buf, read_buf+ret);
         return (int)ret;
     };

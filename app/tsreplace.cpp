@@ -1642,7 +1642,7 @@ TSReplace::EncoderType TSReplace::getEncoderType() {
     auto encoder = createRGYPipeProcess();
     encoder->init(PIPE_MODE_DISABLE, PIPE_MODE_ENABLE, PIPE_MODE_ENABLE | PIPE_MODE_MUXED);
 
-    auto args = std::vector<tstring>{ m_encoderPath, _T("-v") };
+    auto args = std::vector<tstring>{ m_encoderPath, _T("--version") };
 
     AddMessage(RGY_LOG_INFO, _T("Run encoder: %s --version\n"), m_encoderPath.c_str());
     if (encoder->run(args, nullptr, 0, false, false)) {
@@ -1672,6 +1672,7 @@ RGY_ERR TSReplace::initEncoder() {
     m_encoder->init(PIPE_MODE_ENABLE | PIPE_MODE_ENABLE_FP, PIPE_MODE_ENABLE, PIPE_MODE_ENABLE);
 
     const auto encoderType = getEncoderType();
+    AddMessage(RGY_LOG_INFO, _T("encoder type: %d\n"), encoderType);
 
     std::vector<tstring> args = m_encoderArgs;
     if (m_vidPIDReplace) {
