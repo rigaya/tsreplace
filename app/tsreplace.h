@@ -231,6 +231,7 @@ protected:
     RGY_ERR initEncoder();
     RGY_ERR readTS(std::vector<uniqueRGYTSPacket>& packetBuffer);
     RGY_ERR writePacket(const RGYTSPacket *pkt);
+    RGY_ERR writeReplacedPAT(const RGYTS_PAT *pat);
     RGY_ERR writeReplacedPMT(const RGYTSDemuxResult& result);
     RGY_ERR writeReplacedVideo();
     RGY_ERR writeReplacedVideo(AVPacket *pkt);
@@ -298,8 +299,10 @@ protected:
     TSRReplaceStartPoint m_startPoint; // 起点モード
     int64_t m_vidFirstTimestamp;       // 起点のtimestamp
     int64_t m_vidFirstPacketPTS;       // 最初のパケットのPTS
+    std::vector<uint8_t> m_lastPat; // 直前の出力PATデータ
     std::vector<uint8_t> m_lastPmt; // 直前の出力PMTデータ
     std::unique_ptr<TSReplaceVideo> m_videoReplace; // 置き換え対象の動画の読み込み用
+    uint8_t m_patCounter; // 出力PATのカウンタ
     uint8_t m_pmtCounter; // 出力PMTのカウンタ
     uint8_t m_vidCounter; // 出力映像のカウンタ
     int64_t m_ptswrapOffset; // PCR wrapの加算分

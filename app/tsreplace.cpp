@@ -971,8 +971,10 @@ TSReplace::TSReplace() :
     m_startPoint(TSRReplaceStartPoint::KeyframPts),
     m_vidFirstTimestamp(TIMESTAMP_INVALID_VALUE),
     m_vidFirstPacketPTS(TIMESTAMP_INVALID_VALUE),
+    m_lastPat(),
     m_lastPmt(),
     m_videoReplace(),
+    m_patCounter(0),
     m_pmtCounter(0),
     m_vidCounter(0),
     m_ptswrapOffset(0),
@@ -1275,6 +1277,61 @@ uint8_t TSReplace::getvideoDecCtrlEncodeFormat(const int height) {
     default:   return 0x00;
     }
 }
+
+// 対象のサービスのみ出力する場合、PATも置き換える
+RGY_ERR TSReplace::writeReplacedPAT(const RGYTS_PAT *pat) {
+    const bool addNit = pat->pmt[0].program_number == 0;
+
+    std::vector<uint8_t> buf(9, 0);
+    // Create PAT
+    buf[1+0] = 0x00;
+    buf[1+1] = 0xb0;
+    buf[1+2] = addNit ? 17 : 13;
+    buf[1+3] = (uint8_t)(pat->transport_stream_id >> 8);
+    buf[1+4] = (uint8_t)((pat->transport_stream_id) & 0xff);
+    buf[1+5] = m_lastPat.size() > 6 ? m_lastPat[6] : (uint8_t)pat->version_number;
+
+    auto add_program = [&buf](const RGYTS_PMT_PID *pmt_pid) {
+        buf.push_back((uint8_t)(pmt_pid->program_number >> 8));
+        buf.push_back((uint8_t)(pmt_pid->program_number & 0xff));
+        buf.push_back(0xe0 | (uint8_t)(0x1f & (pmt_pid->pmt_pid >> 8)));
+        buf.push_back((uint8_t)(pmt_pid->pmt_pid & 0xff));
+    };
+    if (addNit) {
+        add_program(&pat->pmt[0]);
+    }
+    // 対象のサービスのみ出力する
+    auto selectService = m_demuxer->selectServiceID();
+    if (!selectService) return RGY_ERR_NULL_PTR;
+
+    add_program(selectService);
+
+    if (m_lastPat.size() == buf.size() + 4
+        && std::equal(buf.begin(), buf.end(), m_lastPat.begin())) {
+        buf.insert(buf.end(), m_lastPat.end() - 4, m_lastPat.end()); // copy CRC
+    } else {
+        buf[6] = 0xc1 | (((buf[6] >> 1) + 1) & 0x1f) << 1; // Increment version number
+        const uint32_t crc = calc_crc32(buf.data() + 1, static_cast<int>(buf.size() - 1));
+        buf.push_back(crc >> 24);
+        buf.push_back((crc >> 16) & 0xff);
+        buf.push_back((crc >> 8) & 0xff);
+        buf.push_back(crc & 0xff);
+        m_lastPat = buf;
+    }
+
+    RGYTSPacket pkt;
+    pkt.packet.reserve(188);
+    pkt.packet.push_back(0x47);
+    pkt.packet.push_back(0x40);
+    pkt.packet.push_back(0x00);
+    m_patCounter = (m_patCounter + 1) & 0x0f;
+    pkt.packet.push_back(0x10 | m_patCounter);
+    pkt.packet.insert(pkt.packet.end(), buf.begin(), buf.end());
+    pkt.packet.resize((pkt.packet.size() / 188 + 1) * 188, 0xff);
+    writePacket(&pkt);
+    return RGY_ERR_NONE;
+}
+
 RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
     // 参考: https://txqz.net/memo/2012-0916-1729.html
     const auto psi = result.psi.get();
@@ -1605,8 +1662,14 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     }
     AddMessage(RGY_LOG_DEBUG, _T("Got PAT/PMT.\n"));
 
+    // ひとつのサービスしかなければ、削除するサービスはないのでm_removeNonTargetService=falseに変更する
+    if (std::count_if(pat->pmt.begin(), pat->pmt.end(), [](const auto& p) { return p.program_number > 0; }) == 1) {
+        m_removeNonTargetService = false;
+        AddMessage(RGY_LOG_DEBUG, _T("Only 1 service exist, remove non target service = false.\n"));
+    }
+
     m_vidPIDReplace = service->vid.stream.pid;
-    AddMessage(RGY_LOG_INFO, _T("Output vid pid: 0x%04x.\n"), m_vidPIDReplace);
+    AddMessage(RGY_LOG_INFO, _T("Target service ID %d, replace vid pid: 0x%04x (%d).\n"), service->programNumber, m_vidPIDReplace, m_vidPIDReplace);
 
     // 映像の先頭の時刻を検出
     AddMessage(RGY_LOG_DEBUG, _T("Start input ts preanalysis.\n"));
@@ -1840,7 +1903,11 @@ RGY_ERR TSReplace::restruct() {
             }
             if (ret.type == RGYTSPacketType::PAT) {
                 pat = m_demuxer->pat();
-                writePacket(tspkt.get());
+                if (!m_removeNonTargetService) {
+                    writePacket(tspkt.get());
+                } else if (pat) {
+                    writeReplacedPAT(pat);
+                }
                 if (pmtResult) {
                     writeReplacedPMT(*pmtResult);
                     pmtResult.reset();
