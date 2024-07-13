@@ -213,6 +213,11 @@ struct TSRReplaceParams {
 class TSReplace {
 protected:
     static const int TS_TIMEBASE = 90000;
+    enum class EncoderType {
+        Unknwon,
+        HWEncC,
+        ffmpeg,
+    };
 public:
     TSReplace();
     virtual ~TSReplace();
@@ -222,7 +227,7 @@ public:
     void close();
 protected:
     RGY_ERR initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets);
-    bool isHWEncC();
+    EncoderType getEncoderType();
     RGY_ERR initEncoder();
     RGY_ERR readTS(std::vector<uniqueRGYTSPacket>& packetBuffer);
     RGY_ERR writePacket(const RGYTSPacket *pkt);

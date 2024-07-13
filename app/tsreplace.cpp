@@ -1638,16 +1638,16 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     return RGY_ERR_NONE;
 }
 
-bool TSReplace::isHWEncC() {
+TSReplace::EncoderType TSReplace::getEncoderType() {
     auto encoder = createRGYPipeProcess();
     encoder->init(PIPE_MODE_DISABLE, PIPE_MODE_ENABLE, PIPE_MODE_ENABLE | PIPE_MODE_MUXED);
 
-    auto args = std::vector<tstring>{ m_encoderPath, _T("--version") };
+    auto args = std::vector<tstring>{ m_encoderPath, _T("-v") };
 
     AddMessage(RGY_LOG_INFO, _T("Run encoder: %s --version\n"), m_encoderPath.c_str());
     if (encoder->run(args, nullptr, 0, false, false)) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to run \"%s\".\n"), m_encoderPath.c_str());
-        return false;
+        return EncoderType::Unknwon;
     }
     auto output = encoder->getOutput();
     // outputの1行目を取得
@@ -1659,19 +1659,33 @@ bool TSReplace::isHWEncC() {
         || output.find("NVEnc")    != std::string::npos
         || output.find("VCEEnc")   != std::string::npos
         || output.find("rkmppenc") != std::string::npos) {
-        return true;
+        return EncoderType::HWEncC;
     }
-    return false;
+    if (output.find("ffmpeg") != std::string::npos && output.find("version") != std::string::npos) {
+        return EncoderType::ffmpeg;
+    }
+    return EncoderType::Unknwon;
 }
 
 RGY_ERR TSReplace::initEncoder() {
     m_encoder = createRGYPipeProcess();
     m_encoder->init(PIPE_MODE_ENABLE | PIPE_MODE_ENABLE_FP, PIPE_MODE_ENABLE, PIPE_MODE_ENABLE);
 
+    const auto encoderType = getEncoderType();
+
     std::vector<tstring> args = m_encoderArgs;
-    if (m_vidPIDReplace && isHWEncC()) {
-        args.push_back(_T("--video-streamid"));
-        args.push_back(strsprintf(_T("%d"), m_vidPIDReplace));
+    if (m_vidPIDReplace) {
+        if (encoderType == EncoderType::HWEncC) {
+            args.push_back(_T("--video-streamid"));
+            args.push_back(strsprintf(_T("%d"), m_vidPIDReplace));
+        } else if (encoderType == EncoderType::ffmpeg) {
+            // args の中に -i がある場合、その次に追加する
+            auto it = std::find(args.begin(), args.end(), _T("-i"));
+            if (it != args.end() && (it + 1) != args.end()) {
+                std::vector<tstring> map = { _T("-map"), strsprintf(_T("0:p:%d:0"), m_vidPIDReplace) };
+                args.insert(it + 2, map.begin(), map.end());
+            }
+        }
     }
 
     tstring optionstr;
