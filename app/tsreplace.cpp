@@ -39,6 +39,8 @@
 #include "rgy_filesystem.h"
 #include "tsreplace.h"
 
+static const TCHAR *serviceNum[] = {_T(""), _T("1st"), _T("2nd"), _T("3rd"), _T("4th"), _T("5th"), _T("6th"), _T("7th"), _T("8th"), _T("9th")};
+
 static const int64_t WRAP_AROUND_VALUE = (1LL << 33);
 static const int64_t WRAP_AROUND_CHECK_VALUE = ((1LL << 32) - 1);
 
@@ -1058,7 +1060,11 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     AddMessage(RGY_LOG_INFO, _T("Add Headers : %s.\n"), m_addHeaders ? _T("on") : _T("off"));
     AddMessage(RGY_LOG_INFO, _T("Remove TypeD: %s.\n"), m_removeTypeD ? _T("on") : _T("off"));
     if (m_selectService) {
-        AddMessage(RGY_LOG_INFO, _T("Target Service         : %d.\n"), m_selectService);
+        if (m_selectService < 0) {
+            AddMessage(RGY_LOG_INFO, _T("Target Service         : %s.\n"), serviceNum[-1 * m_selectService]);
+        } else {
+            AddMessage(RGY_LOG_INFO, _T("Target Service         : %d.\n"), m_selectService);
+        }
     }
     AddMessage(RGY_LOG_INFO, _T("Preserve Other Services: %s.\n"), m_removeNonTargetService ? _T("off") : _T("on"));
 
@@ -2135,10 +2141,9 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
     }
     if (IS_OPTION("service")) {
         i++;
-        static const TCHAR *serviceNum[] = {_T(""), _T("1st"), _T("2nd"), _T("3rd"), _T("4th"), _T("5th"), _T("6th"), _T("7th"), _T("8th"), _T("9th")};
-        for (int i = 1; i < (int)_countof(serviceNum); i++) {
-            if (_tcsicmp(strInput[i], serviceNum[i]) == 0) {
-                prm.selectService = -1 * i;
+        for (int isn = 1; isn < (int)_countof(serviceNum); isn++) {
+            if (_tcsicmp(strInput[i], serviceNum[isn]) == 0) {
+                prm.selectService = -1 * isn;
                 return 0;
             }
         }
