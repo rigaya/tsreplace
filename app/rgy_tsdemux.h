@@ -105,6 +105,7 @@ struct RGYTSDemuxResult {
     int programNumber;
     int64_t pts;
     int64_t dts;
+    int64_t pcr;
     std::unique_ptr<RGYTSPESHeader> pesHeader;
     std::unique_ptr<RGYTS_PSI> psi;
 
@@ -133,6 +134,7 @@ public:
     void resetPCR();
     void resetPSICache();
     bool isPIDTargetService(const int pid) const;
+    bool isPIDExists(const int pid) const;
 protected:
     void checkPMTList();
     RGYTSDemuxProgram *selectProgramFromPMTPID(const int pmt_pid);

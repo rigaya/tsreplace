@@ -77,6 +77,7 @@ RGYTSDemuxResult::RGYTSDemuxResult() :
     programNumber(-1),
     pts(TIMESTAMP_INVALID_VALUE),
     dts(TIMESTAMP_INVALID_VALUE),
+    pcr(TIMESTAMP_INVALID_VALUE),
     pesHeader(),
     psi() {
 
@@ -471,6 +472,20 @@ bool RGYTSDemuxer::isPIDTargetService(const int pid) const {
     }) != m_targetService->pidList.end();
 }
 
+bool RGYTSDemuxer::isPIDExists(const int pid) const {
+    for (const auto& program : m_programs) {
+        if (program->pmt_pid.pmt_pid == pid) {
+            return true;
+        }
+        for (const auto& stream : program->service.pidList) {
+            if (stream.pid == pid) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 const RGYTS_PMT_PID *RGYTSDemuxer::selectServiceID() {
     return selectServiceID(m_selectServiceID);
 }
@@ -626,10 +641,15 @@ std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt
                 m_pcr = pcr;
             }
             result.type = RGYTSPacketType::PCR;
-            result.pts = pcr;
-            AddMessage((pcr != TIMESTAMP_INVALID_VALUE) ? RGY_LOG_TRACE : RGY_LOG_WARN,
+            result.pcr = pcr;
+            // PCRが他のストリームに含まれる場合は、PCRが取得できなくても異常ではない
+            const auto pcrMuxedWithOtherStream = std::find_if(service->service.pidList.begin(), service->service.pidList.end(), [pidPCR = packetHeader.PID](const auto& st) {
+                return st.pid == pidPCR;
+            }) != service->service.pidList.end();
+            AddMessage((pcr != TIMESTAMP_INVALID_VALUE || pcrMuxedWithOtherStream) ? RGY_LOG_TRACE : RGY_LOG_WARN,
                 _T("  pid pcr  0x%04x, %lld\n"), service->service.pidPcr, pcr);
-        } else if (packetHeader.PID == service->service.vid.stream.pid) {
+        }
+        if (packetHeader.PID == service->service.vid.stream.pid) {
             result.type = RGYTSPacketType::VID;
             if (packetHeader.PayloadStartFlag) {
                 auto pes = parsePESHeader(pkt->packet);

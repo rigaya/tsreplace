@@ -962,6 +962,7 @@ TSReplace::TSReplace() :
     m_bufferTS(),
     m_preAnalysisFin(false),
     m_vidPIDReplace(0x0100),
+    m_pcrPIDReplace(0),
     m_vidDTSOutMax(TIMESTAMP_INVALID_VALUE),
     m_vidPTS(TIMESTAMP_INVALID_VALUE),
     m_vidDTS(TIMESTAMP_INVALID_VALUE),
@@ -1278,6 +1279,26 @@ uint8_t TSReplace::getvideoDecCtrlEncodeFormat(const int height) {
     }
 }
 
+RGY_ERR TSReplace::writeReplacedPCR(const uint64_t pcr) {
+    RGYTSPacket pkt;
+    pkt.packet.reserve(188);
+    pkt.packet.push_back(0x47);
+    pkt.packet.push_back(m_pcrPIDReplace >> 8);
+    pkt.packet.push_back(m_pcrPIDReplace & 0xff);
+    pkt.packet.push_back(0x20);
+    pkt.packet.push_back(183);
+    pkt.packet.push_back(0x10);
+    pkt.packet.push_back((uint8_t)((pcr >> 25) & 0xff));
+    pkt.packet.push_back((uint8_t)((pcr >> 17) & 0xff));
+    pkt.packet.push_back((uint8_t)((pcr >>  9) & 0xff));
+    pkt.packet.push_back((uint8_t)((pcr >>  1) & 0xff));
+    pkt.packet.push_back((uint8_t)(pcr << 7) | 0x7e);
+    pkt.packet.push_back(0);
+    pkt.packet.resize((pkt.packet.size() / 188 + 1) * 188, 0xff);
+    writePacket(&pkt);
+    return RGY_ERR_NONE;
+}
+
 // 対象のサービスのみ出力する場合、PATも置き換える
 RGY_ERR TSReplace::writeReplacedPAT(const RGYTS_PAT *pat) {
     const bool addNit = pat->pmt[0].program_number == 0;
@@ -1350,9 +1371,10 @@ RGY_ERR TSReplace::writeReplacedPMT(const RGYTSDemuxResult& result) {
     // Create PMT
     std::vector<uint8_t> buf(1, 0);
     buf.insert(buf.end(), table + 0, table + pos); // descriptor まで
-    if (m_demuxer->service()->pidPcr == m_demuxer->service()->vid.stream.pid) {
-        buf[1+ 9] = (uint8_t)((m_vidPIDReplace & 0x1fff) >> 8) | (buf[1 + 9] & 0xE0); // PIDの上書き
-        buf[1+10] = (uint8_t) (m_vidPIDReplace & 0x00ff);                             // PIDの上書き
+    // PCRが映像のストリームに含まれる場合は、別PIDで独立したPCRパケットを生成するためPCRのPIDを書き換える
+    if (m_pcrPIDReplace > 0) {
+        buf[1+ 8] = (uint8_t)((m_pcrPIDReplace & 0x1fff) >> 8) | (buf[1 + 8] & 0xE0); // PIDの上書き
+        buf[1+ 9] = (uint8_t) (m_pcrPIDReplace & 0x00ff);                             // PIDの上書き
     }
 
     const int tableLen = 3 + psi->section_length - 4/*CRC32*/;
@@ -1671,6 +1693,19 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     m_vidPIDReplace = service->vid.stream.pid;
     AddMessage(RGY_LOG_INFO, _T("Target service ID %d, replace vid pid: 0x%04x (%d).\n"), service->programNumber, m_vidPIDReplace, m_vidPIDReplace);
 
+    if (service->pidPcr == service->vid.stream.pid) {
+        // PCRが映像のストリームに含まれる場合は、別PIDで独立したPCRパケットを生成する
+        // 空いているPIDを探す
+        auto pcr_pid_high = std::max((service->vid.stream.pid & 0xff00), 0x0100);
+        for (auto pcr_pid = pcr_pid_high + 0xff; pcr_pid > pcr_pid_high; pcr_pid--) {
+            if (!m_demuxer->isPIDExists(pcr_pid)) {
+                m_pcrPIDReplace = pcr_pid;
+                AddMessage(RGY_LOG_INFO, _T("pcr pid 0x%04x (%d) -> 0x%04x (%d).\n"), service->pidPcr, service->pidPcr, m_pcrPIDReplace, m_pcrPIDReplace);
+                break;
+            }
+        }
+    }
+
     // 映像の先頭の時刻を検出
     AddMessage(RGY_LOG_DEBUG, _T("Start input ts preanalysis.\n"));
     auto originalTS = std::make_unique<TSReplaceVideo>(m_log);
@@ -1943,10 +1978,18 @@ RGY_ERR TSReplace::restruct() {
                                 return err;
                             }
                         }
-                        writePacket(tspkt.get());
+                        if (m_pcrPIDReplace) {
+                            writeReplacedPCR(ret.pcr);
+                        } else {
+                            writePacket(tspkt.get());
+                        }
                         break;
                     }
                     case RGYTSPacketType::VID:
+                        // PCRが映像のストリームに含まれる場合は、別PIDで独立したPCRパケットを生成する
+                        if (m_pcrPIDReplace && ret.pcr != TIMESTAMP_INVALID_VALUE) {
+                            writeReplacedPCR(ret.pcr);
+                        }
                         if (tspkt->header.PayloadStartFlag) {
                             m_vidPTS = ret.pts;
                             m_vidDTS = ret.dts;

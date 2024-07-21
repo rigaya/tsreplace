@@ -231,6 +231,7 @@ protected:
     RGY_ERR initEncoder();
     RGY_ERR readTS(std::vector<uniqueRGYTSPacket>& packetBuffer);
     RGY_ERR writePacket(const RGYTSPacket *pkt);
+    RGY_ERR writeReplacedPCR(const uint64_t pcr);
     RGY_ERR writeReplacedPAT(const RGYTS_PAT *pat);
     RGY_ERR writeReplacedPMT(const RGYTSDemuxResult& result);
     RGY_ERR writeReplacedVideo();
@@ -290,6 +291,7 @@ protected:
     std::vector<uint8_t> m_bufferTS; // 読み込みtsのファイルバッファ
     bool m_preAnalysisFin; // 事前解析の終了
     uint16_t m_vidPIDReplace;   // 出力tsの動画のPID上書き用
+    uint16_t m_pcrPIDReplace;   // 出力tsのPCRのPID上書き用
     int64_t m_vidDTSOutMax;     // 動画フレームのDTS最大値(出力制御用)
     int64_t m_vidPTS;           // 直前の動画フレームのPTS
     int64_t m_vidDTS;           // 直前の動画フレームのDTS
