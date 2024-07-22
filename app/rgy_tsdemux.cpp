@@ -643,9 +643,12 @@ std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt
             result.type = RGYTSPacketType::PCR;
             result.pcr = pcr;
             // PCRが他のストリームに含まれる場合は、PCRが取得できなくても異常ではない
-            const auto pcrMuxedWithOtherStream = std::find_if(service->service.pidList.begin(), service->service.pidList.end(), [pidPCR = packetHeader.PID](const auto& st) {
-                return st.pid == pidPCR;
-            }) != service->service.pidList.end();
+            const auto pcrMuxedWithOtherStream = 
+                   packetHeader.PID == service->service.vid.stream.pid
+                || packetHeader.PID == service->service.aud0.stream.pid
+                || packetHeader.PID == service->service.aud1.stream.pid
+                || packetHeader.PID == service->service.cap.stream.pid
+                || packetHeader.PID == service->service.pidSuperimpose;
             AddMessage((pcr != TIMESTAMP_INVALID_VALUE || pcrMuxedWithOtherStream) ? RGY_LOG_TRACE : RGY_LOG_WARN,
                 _T("  pid pcr  0x%04x, %lld\n"), service->service.pidPcr, pcr);
         }
