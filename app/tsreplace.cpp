@@ -1000,8 +1000,8 @@ void TSReplace::close() {
     m_inputAbort = true;
     //エンコーダの終了
     if (m_encoder) {
-        AddMessage(RGY_LOG_DEBUG, _T("Close Encoder.\n"));
-        m_encoder->close();
+        AddMessage(RGY_LOG_DEBUG, _T("Close Encoder stdin.\n"));
+        m_encoder->stdInFpClose();
     }
     if (m_encThreadOut.joinable()) {
         AddMessage(RGY_LOG_DEBUG, _T("Finish thread for encoder stdout.\n"));
@@ -1033,6 +1033,11 @@ void TSReplace::close() {
     }
     AddMessage(RGY_LOG_DEBUG, _T("Close ts input queue.\n"));
     m_queueInputReplace.reset();
+
+    if (m_encoder) {
+        AddMessage(RGY_LOG_DEBUG, _T("Close Encoder.\n"));
+        m_encoder.reset();
+    }
 }
 
 RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prms) {
