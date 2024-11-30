@@ -996,7 +996,8 @@ TSReplace::~TSReplace() {
     close();
 }
 
-void TSReplace::close() {
+RGY_ERR TSReplace::close() {
+    auto sts = RGY_ERR_NONE;
     m_inputAbort = true;
     //エンコーダの終了
     if (m_encoder) {
@@ -1035,9 +1036,12 @@ void TSReplace::close() {
     m_queueInputReplace.reset();
 
     if (m_encoder) {
+        sts = (RGY_ERR)m_encoder->waitAndGetExitCode();
+        m_encoder->close();
         AddMessage(RGY_LOG_DEBUG, _T("Close Encoder.\n"));
         m_encoder.reset();
     }
+    return sts;
 }
 
 RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prms) {
@@ -2440,5 +2444,8 @@ int _tmain(const int argc, const TCHAR **argv) {
     if (err != RGY_ERR_NONE) return 1;
 
     err = restruct.restruct();
+    if (err == RGY_ERR_NONE || err == RGY_ERR_MORE_DATA) {
+        err = restruct.close();
+    }
     return (err == RGY_ERR_MORE_DATA || err == RGY_ERR_NONE) ? 0 : 1;
 }

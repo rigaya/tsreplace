@@ -271,7 +271,7 @@ bool RGYPipeProcessLinux::processAlive() {
     return 0 == waitpid(m_phandle, &status, WNOHANG);
 }
 
-int RGYPipeProcessWin::waitAndGetExitCode() {
+int RGYPipeProcessLinux::waitAndGetExitCode() {
     int status = 0;
     waitpid(m_phandle, &status, 0);
     return status;

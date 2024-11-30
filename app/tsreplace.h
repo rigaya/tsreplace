@@ -224,7 +224,7 @@ public:
 
     RGY_ERR init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prms);
     RGY_ERR restruct();
-    void close();
+    RGY_ERR close();
 protected:
     RGY_ERR initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets);
     EncoderType getEncoderType();
