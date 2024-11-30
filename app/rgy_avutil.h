@@ -47,6 +47,12 @@ extern "C" {
 #include <libavutil/pixdesc.h>
 #include <libavutil/display.h>
 #include <libavutil/mastering_display_metadata.h>
+#if __has_include(<libavutil/dovi_meta.h>)
+#define LIBAVUTIL_DOVI_META_AVAIL 1
+#include <libavutil/dovi_meta.h>
+#else
+#define LIBAVUTIL_DOVI_META_AVAIL 0
+#endif
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
 #include <libavcodec/avcodec.h>
@@ -412,6 +418,8 @@ uniuqeRGYChannelLayout getDefaultChannelLayout(const int nb_channels);
 int getChannelLayoutIndexFromChannel(const RGYChannelLayout *ch_layout, const RGYChannel channel);
 RGYChannel getChannelLayoutChannelFromIndex(const RGYChannelLayout *ch_layout, const int index);
 
+bool ChannelLayoutExists(const RGYChannelLayout *target, const AVCodec *codec);
+
 //時刻を表示
 std::string getTimestampChar(int64_t ts, const AVRational& timebase);
 tstring getTimestampString(int64_t ts, const AVRational& timebase);
@@ -498,6 +506,7 @@ MAP_PAIR_0_1_PROTO(disposition, str, tstring, av, uint32_t);
 
 uint32_t parseDisposition(const tstring &disposition_str);
 tstring getDispositionStr(uint32_t disposition);
+RGYDOVIProfile getStreamDOVIProfile(const AVStream *stream);
 
 #else
 #define AV_NOPTS_VALUE (-1)

@@ -27,8 +27,12 @@
 
 #include <regex>
 #include "rgy_util.h"
+#include "rgy_def.h"
 #include "rgy_bitstream.h"
 #include "rgy_memmem.h"
+#if ENABLE_LIBDOVI
+#include "rgy_libdovi.h"
+#endif
 
 std::vector<uint8_t> unnal(const uint8_t *ptr, size_t len) {
     std::vector<uint8_t> data;
@@ -65,6 +69,39 @@ void add_u32(std::vector<uint8_t>& data, uint32_t u32) {
     data.push_back((uint8_t)((u32 & 0x00ff0000) >> 16));
     data.push_back((uint8_t)((u32 & 0x0000ff00) >>  8));
     data.push_back((uint8_t)((u32 & 0x000000ff) >>  0));
+}
+
+int get_hevc_sei_size(size_t& size, const uint8_t *ptr) {
+    const auto orig_ptr = ptr;
+    size = 0;
+    while (ptr[0] == 0xff) {
+        size += 0xff;
+        ptr++;
+    }
+    size += ptr[0];
+    return (int)(ptr - orig_ptr);
+}
+
+std::vector<uint8_t> gen_hevc_alpha_channel_info_sei(const int mode) {
+    // 下記資料に基づいて生成する
+    // https://developer.apple.com/av-foundation/HEVC-Video-with-Alpha-Interoperability-Profile.pdf
+    std::vector<uint8_t> header = { 0x00, 0x00, 0x00, 0x01 };
+    std::vector<uint8_t> buf;
+    uint16_t u16 = 0x00;
+    u16 |= (NALU_HEVC_PREFIX_SEI << 9) | 1;
+    add_u16(buf, u16);
+    buf.push_back(ALPHA_CHANNEL_INFO);
+    buf.push_back(4); // size
+    buf.push_back((mode & 0x07) << 4);
+    buf.push_back(0);
+    buf.push_back(0x7f);
+    buf.push_back(0x90);
+    to_nal(buf);
+
+    std::vector<uint8_t> nalbuf;
+    vector_cat(nalbuf, header);
+    vector_cat(nalbuf, buf);
+    return nalbuf;
 }
 
 uint8_t gen_obu_header(const uint8_t obu_type) {
@@ -426,6 +463,52 @@ std::vector<uint8_t> RGYHDRMetadata::gen_obu() const {
     return data;
 }
 
+int convert_dovi_rpu(std::vector<uint8_t>& data, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm) {
+#if ENABLE_LIBDOVI
+    if (!prm) {
+        return 0;
+    }
+    if (data.size() == 0) {
+        return 0;
+    }
+    if (prm->convertProfile || prm->activeAreaOffsets.enable || prm->removeMapping) {
+        std::unique_ptr<DoviRpuOpaque, decltype(&dovi_rpu_free)> rpu(dovi_parse_rpu(data.data(), data.size()), dovi_rpu_free);
+        if (!rpu) {
+            return 1;
+        }
+        std::unique_ptr<const DoviRpuDataHeader, decltype(&dovi_rpu_free_header)> header(dovi_rpu_get_header(rpu.get()), dovi_rpu_free_header);
+        if (!header) {
+            return 1;
+        }
+        const auto dovi_profile = header->guessed_profile;
+        if (prm->convertProfile
+            && dovi_profile == 7
+            && (doviProfileDst == RGY_DOVI_PROFILE_81 || doviProfileDst == RGY_DOVI_PROFILE_COPY)) {
+            const int ret = dovi_convert_rpu_with_mode(rpu.get(), 2);
+            if (ret != 0) {
+                return 1;
+            }
+        }
+        if (prm->activeAreaOffsets.enable) {
+            dovi_rpu_set_active_area_offsets(rpu.get(),
+                prm->activeAreaOffsets.left, prm->activeAreaOffsets.right, prm->activeAreaOffsets.top, prm->activeAreaOffsets.bottom);
+        }
+        if (prm->removeMapping) {
+            dovi_rpu_remove_mapping(rpu.get());
+        }
+        std::unique_ptr<const DoviData, decltype(&dovi_data_free)> rpu_data(dovi_write_rpu(rpu.get()), dovi_data_free);
+        if (!rpu_data) {
+            return 1;
+        }
+        data.resize(rpu_data->len);
+        memcpy(data.data(), rpu_data->data, rpu_data->len);
+    }
+    return 0;
+#else
+    return (prm) ? 1 : 0;
+#endif // ENABLE_LIBDOVI
+}
+
 DOVIRpu::DOVIRpu() : m_find_header(get_find_header_func()), m_filepath(), m_fp(nullptr, fp_deleter()), m_buffer(), m_datasize(0), m_dataoffset(0), m_count(0), m_rpus() {};
 DOVIRpu::~DOVIRpu() { m_fp.reset(); };
 
@@ -464,7 +547,7 @@ int DOVIRpu::fillBuffer() {
     return bytes_read;
 }
 
-int DOVIRpu::get_next_rpu(std::vector<uint8_t>& bytes) {
+int DOVIRpu::get_next_rpu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm) {
     if (m_datasize <= 4) {
         if (fillBuffer() == 0) {
             return 1; //EOF
@@ -497,16 +580,17 @@ int DOVIRpu::get_next_rpu(std::vector<uint8_t>& bytes) {
     bytes.resize(next_size);
     const auto dataptr = m_buffer.data() + m_dataoffset;
     memcpy(bytes.data(), dataptr, next_size);
+    auto output = unnal(bytes.data(), bytes.size());
     m_dataoffset += next_size;
     m_datasize -= next_size;
-    return 0;
+    return convert_dovi_rpu(output, doviProfileDst, prm);
 }
 
-int DOVIRpu::get_next_rpu(std::vector<uint8_t>& bytes, const int64_t id) {
+int DOVIRpu::get_next_rpu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id) {
     bytes.clear();
     for (; m_count <= id; m_count++) {
         std::vector<uint8_t> rpu;
-        if (int ret = get_next_rpu(rpu); ret != 0) {
+        if (int ret = get_next_rpu(rpu, doviProfileDst, prm); ret != 0) {
             return ret;
         }
         m_rpus[m_count] = rpu;
@@ -520,15 +604,15 @@ int DOVIRpu::get_next_rpu(std::vector<uint8_t>& bytes, const int64_t id) {
     return 0;
 }
 
-int DOVIRpu::get_next_rpu_nal(std::vector<uint8_t>& bytes, const int64_t id) {
+int DOVIRpu::get_next_rpu_nal(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id) {
     std::vector<uint8_t> rpu;
-    if (int ret = get_next_rpu(rpu, id); ret != 0) {
+    if (int ret = get_next_rpu(rpu, doviProfileDst, prm, id); ret != 0) {
         return ret;
     }
-    //to_nal(rpu); // NALU_HEVC_UNSPECIFIEDの場合は不要
     if (rpu.back() == 0x00) { // 最後が0x00の場合
         rpu.push_back(0x03);
     }
+    to_nal(rpu);
 
     bytes.resize(sizeof(DOVIRpu::rpu_header));
     memcpy(bytes.data(), &DOVIRpu::rpu_header, sizeof(DOVIRpu::rpu_header));
@@ -538,6 +622,33 @@ int DOVIRpu::get_next_rpu_nal(std::vector<uint8_t>& bytes, const int64_t id) {
     add_u16(bytes, u16);
     vector_cat(bytes, rpu);
     return 0;
+}
+
+int DOVIRpu::get_next_rpu_obu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id) {
+    std::vector<uint8_t> tmp;
+    if (int ret = get_next_rpu(tmp, doviProfileDst, prm, id); ret != 0) {
+        return ret;
+    }
+
+    auto rpu = unnal(tmp.data(), tmp.size());
+
+    std::vector<uint8_t> buf;
+    if (rpu.size() > sizeof(av1_itut_t35_header_dovirpu) && memcmp(rpu.data(), av1_itut_t35_header_dovirpu, sizeof(av1_itut_t35_header_dovirpu)) == 0) {
+        buf = rpu;
+    } else {
+        buf = make_vector<uint8_t>(av1_itut_t35_header_dovirpu);
+        vector_cat(buf, rpu);
+    }
+    bytes = gen_av1_obu_metadata(AV1_METADATA_TYPE_ITUT_T35, buf);
+    return 0;
+}
+
+int DOVIRpu::get_next_rpu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id, const RGY_CODEC codec) {
+    switch (codec) {
+    case RGY_CODEC_HEVC: return get_next_rpu_nal(bytes, doviProfileDst, prm, id);
+    case RGY_CODEC_AV1: return get_next_rpu_obu(bytes, doviProfileDst, prm, id);
+    default: return 1;
+    }
 }
 
 const DOVIProfile *getDOVIProfile(const int id) {
@@ -559,7 +670,7 @@ std::vector<nal_info> parse_nal_unit_h264_c(const uint8_t *data, size_t size) {
     std::vector<nal_info> nal_list;
     if (size >= 3) {
         static const uint8_t header[3] = { 0, 0, 1 };
-        nal_info nal_start = { nullptr, 0, 0 };
+        nal_info nal_start = { nullptr, 0, 0, 0, 0 };
         int64_t i = 0;
         for (;;) {
             const auto next = rgy_memmem_c((const void *)(data + i), size - i, (const void *)header, sizeof(header));
@@ -589,7 +700,7 @@ std::vector<nal_info> parse_nal_unit_hevc_c(const uint8_t *data, size_t size) {
     std::vector<nal_info> nal_list;
     if (size >= 3) {
         static const uint8_t header[3] = { 0, 0, 1 };
-        nal_info nal_start = { nullptr, 0, 0 };
+        nal_info nal_start = { nullptr, 0, 0, 0, 0 };
         int64_t i = 0;
         for (;;) {
             const auto next = rgy_memmem_c((const void *)(data + i), size - i, (const void *)header, sizeof(header));
@@ -601,6 +712,40 @@ std::vector<nal_info> parse_nal_unit_hevc_c(const uint8_t *data, size_t size) {
             }
             nal_start.ptr = data + i - (i > 0 && data[i - 1] == 0);
             nal_start.type = (data[i + 3] & 0x7f) >> 1;
+            nal_start.nuh_layer_id = ((data[i + 3] & 1) << 5) | ((data[i + 4] & 0xf8) >> 3);
+            nal_start.temporal_id = (data[i + 4] & 0x07) - 1;
+            nal_start.size = data + size - nal_start.ptr;
+            if (nal_list.size()) {
+                auto prev = nal_list.end() - 1;
+                prev->size = nal_start.ptr - prev->ptr;
+            }
+            i += 3;
+        }
+        if (nal_start.ptr) {
+            nal_list.push_back(nal_start);
+        }
+    }
+    return nal_list;
+}
+
+std::vector<nal_info> parse_nal_unit_vvc_c(const uint8_t *data, size_t size) {
+    std::vector<nal_info> nal_list;
+    if (size >= 3) {
+        static const uint8_t header[3] = { 0, 0, 1 };
+        nal_info nal_start = { nullptr, 0, 0, 0, 0 };
+        int64_t i = 0;
+        for (;;) {
+            const auto next = rgy_memmem_c((const void *)(data + i), size - i, (const void *)header, sizeof(header));
+            if (next == RGY_MEMMEM_NOT_FOUND) break;
+
+            i += next;
+            if (nal_start.ptr) {
+                nal_list.push_back(nal_start);
+            }
+            nal_start.ptr = data + i - (i > 0 && data[i - 1] == 0);
+            nal_start.nuh_layer_id =  data[i + 3] & 0x3f;
+            nal_start.type = (data[i + 4] & 0xf8) >> 3;
+            nal_start.temporal_id = (data[i + 4] & 0x07) - 1;
             nal_start.size = data + size - nal_start.ptr;
             if (nal_list.size()) {
                 auto prev = nal_list.end() - 1;
@@ -666,6 +811,8 @@ static std::unique_ptr<unit_info> get_unit(const uint8_t *data, const size_t siz
 
     unit = std::make_unique<unit_info>();
     unit->type = type;
+    unit->extension_flag = extension_flag;
+    unit->has_size_flag = has_size_flag;
 
     if (extension_flag) {
         data++;
@@ -685,6 +832,7 @@ static std::unique_ptr<unit_info> get_unit(const uint8_t *data, const size_t siz
         const size_t ret = obu_size + (data - start_pos);
         unit->unit_data.resize(ret);
     }
+    unit->obu_offset = (int)(data - start_pos);
     if (unit->unit_data.size() > 0) {
         memcpy(unit->unit_data.data(), start_pos, unit->unit_data.size());
     }
@@ -706,3 +854,269 @@ std::deque<std::unique_ptr<unit_info>> parse_unit_av1(const uint8_t *data, const
     }
     return list;
 }
+
+#if 0
+
+
+class RGYBitStreamReader {
+public:
+    RGYBitStreamReader() : data_(nullptr), size_(0), pos_(0) {}
+
+    void set(const uint8_t *data, size_t size) {
+        data_ = data;
+        size_ = size;
+        pos_ = 0;
+    }
+
+    uint8_t getBit() {
+        if (pos_ >= size_ * 8) {
+            throw std::runtime_error("ビットストリームの終端を超えています。");
+        }
+        uint8_t bit = (data_[pos_ / 8] >> (7 - (pos_ % 8))) & 1;
+        pos_++;
+        return bit;
+    }
+
+    uint32_t getBits(size_t numBits) {
+        uint32_t result = 0;
+        for (size_t i = 0; i < numBits; i++) {
+            result |= getBit() << (numBits - 1 - i);
+        }
+        return result;
+    }
+
+    uint32_t getUEGolomb() {
+        uint32_t zero_count = 0;
+        while (getBit() == 0) {
+            zero_count++;
+        }
+        uint32_t result = (1 << zero_count) - 1;
+        for (uint32_t i = 0; i < zero_count; i++) {
+            result |= getBit() << (zero_count - 1 - i);
+        }
+        return result;
+    }
+
+    void getBytes(uint8_t *data, size_t size) {
+        memcpy(data, data_ + pos_/8, size);
+        pos_ += size * 8;
+    }
+
+private:
+    const uint8_t *data_;
+    size_t size_;
+    size_t pos_;
+};
+
+static const int HEVC_MAX_SUB_LAYERS = 7;
+struct RGYHEVCSublayerHdrParams {
+    uint32_t bit_rate_value_minus1[32];
+    uint32_t cpb_size_value_minus1[32];
+    uint32_t cpb_size_du_value_minus1[32];
+    uint32_t bit_rate_du_value_minus1[32];
+    uint32_t cbr_flag;
+};
+
+struct RGYHEVCHdrFlags {
+    uint8_t fixed_pic_rate_general_flag;
+    uint8_t fixed_pic_rate_within_cvs_flag;
+    uint8_t low_delay_hrd_flag;
+};
+
+struct RGYHEVCHdrParams {
+    RGYHEVCHdrFlags flags;
+    uint8_t nal_hrd_parameters_present_flag;
+    uint8_t vcl_hrd_parameters_present_flag;
+    uint8_t sub_pic_hrd_params_present_flag;
+    uint8_t sub_pic_cpb_params_in_pic_timing_sei_flag;
+
+    uint8_t tick_divisor_minus2;
+    uint8_t du_cpb_removal_delay_increment_length_minus1;
+    uint8_t dpb_output_delay_du_length_minus1;
+    uint8_t bit_rate_scale;
+    uint8_t cpb_size_scale;
+    uint8_t cpb_size_du_scale;
+    uint8_t initial_cpb_removal_delay_length_minus1;
+    uint8_t au_cpb_removal_delay_length_minus1;
+    uint8_t dpb_output_delay_length_minus1;
+    uint8_t cpb_cnt_minus1[HEVC_MAX_SUB_LAYERS];
+    uint16_t elemental_duration_in_tc_minus1[HEVC_MAX_SUB_LAYERS];
+
+    RGYHEVCSublayerHdrParams nal_params[HEVC_MAX_SUB_LAYERS];
+    RGYHEVCSublayerHdrParams vcl_params[HEVC_MAX_SUB_LAYERS];
+};
+
+struct RGYHEVCVPSProfileLevelTierData {
+    uint8_t profile_space;
+    uint8_t tier_flag;
+    uint8_t profile_idc;
+    uint8_t data[10];
+    uint8_t level_idc;
+};
+
+
+struct RGYHEVCVPSProfileLevelTier {
+    RGYHEVCVPSProfileLevelTierData ptl;
+    RGYHEVCVPSProfileLevelTierData sub_layer_ptl[HEVC_MAX_SUB_LAYERS];
+
+    uint8_t sub_layer_profile_present_flag[HEVC_MAX_SUB_LAYERS];
+    uint8_t sub_layer_level_present_flag[HEVC_MAX_SUB_LAYERS];
+};
+
+class RGYHEVCVPSReader {
+    RGYBitStreamReader m_reader;
+public:
+    RGYHEVCVPSReader() : m_reader() {}
+
+    void parseProfileLevelTier(RGYHEVCVPSProfileLevelTierData &profileLevelTier) {
+        profileLevelTier.profile_space = m_reader.getBits(2);
+        profileLevelTier.tier_flag = m_reader.getBit();
+        profileLevelTier.profile_idc = m_reader.getBits(5);
+        m_reader.getBytes(profileLevelTier.data, 10);
+    }
+
+    void parseProfileLevelTier(RGYHEVCVPSProfileLevelTier &profileLevelTier, int max_num_sub_layers) {
+        parseProfileLevelTier(profileLevelTier.ptl);
+        profileLevelTier.ptl.level_idc = m_reader.getBits(8);
+        for (int i = 0; i < max_num_sub_layers - 1; i++) {
+            profileLevelTier.sub_layer_profile_present_flag[i] = m_reader.getBit();
+            profileLevelTier.sub_layer_level_present_flag[i] = m_reader.getBit();
+        }
+        if (max_num_sub_layers - 1 > 0) {
+            for (int i = max_num_sub_layers - 1; i < 8; i++) {
+                m_reader.getBits(2); //skip
+            }
+        }
+        for (int i = 0; i < max_num_sub_layers - 1; i++) {
+            if (profileLevelTier.sub_layer_profile_present_flag[i]) {
+                parseProfileLevelTier(profileLevelTier.sub_layer_ptl[i]);
+            }
+            if (profileLevelTier.sub_layer_level_present_flag[i]) {
+                profileLevelTier.sub_layer_ptl[i].level_idc = m_reader.getBits(8);
+            }
+        }
+    }
+
+    void parseSubLayerHRD(RGYHEVCSublayerHdrParams &hdr, const int cpb_cnt_minus1, const int subpic_params_present) {
+        for (int i = 0; i <= cpb_cnt_minus1; i++) {
+            hdr.bit_rate_value_minus1[i] = m_reader.getUEGolomb();
+            hdr.cpb_size_value_minus1[i] = m_reader.getUEGolomb();
+            if (subpic_params_present) {
+                hdr.cpb_size_du_value_minus1[i] = m_reader.getUEGolomb();
+                hdr.bit_rate_du_value_minus1[i] = m_reader.getUEGolomb();
+            }
+            hdr.cbr_flag |= m_reader.getBit() << i;
+        }
+    }
+
+    void parseHEVCHRD(RGYHEVCHdrParams &hdr, uint8_t cprms_present_flag, int max_num_sub_layers) {
+        if (cprms_present_flag) {
+            hdr.nal_hrd_parameters_present_flag = m_reader.getBit();
+            hdr.vcl_hrd_parameters_present_flag = m_reader.getBit();
+            if (hdr.nal_hrd_parameters_present_flag || hdr.vcl_hrd_parameters_present_flag) {
+                hdr.sub_pic_hrd_params_present_flag = m_reader.getBit();
+                if (hdr.sub_pic_hrd_params_present_flag) {
+                    hdr.tick_divisor_minus2 = m_reader.getBits(8);
+                    hdr.du_cpb_removal_delay_increment_length_minus1 = m_reader.getBits(5);
+                    hdr.sub_pic_cpb_params_in_pic_timing_sei_flag = m_reader.getBit();
+                    hdr.dpb_output_delay_du_length_minus1 = m_reader.getBits(5);
+                }
+                hdr.bit_rate_scale = m_reader.getBits(4);
+                hdr.cpb_size_scale = m_reader.getBits(4);
+                if (hdr.sub_pic_hrd_params_present_flag) {
+                    hdr.cpb_size_du_scale = m_reader.getBits(4);
+                }
+                hdr.initial_cpb_removal_delay_length_minus1 = m_reader.getBits(5);
+                hdr.au_cpb_removal_delay_length_minus1 = m_reader.getBits(5);
+                hdr.dpb_output_delay_length_minus1 = m_reader.getBits(5);
+            }
+        }
+
+        for (int i = 0; i < max_num_sub_layers; i++) {
+            uint32_t fixed_pic_rate_general_flag = m_reader.getBit();
+            uint32_t fixed_pic_rate_within_cvs_flag = 0;
+            if (!fixed_pic_rate_general_flag) {
+                fixed_pic_rate_within_cvs_flag = m_reader.getBit();
+            }
+
+            uint32_t low_delay_hrd_flag = 0;
+            if (fixed_pic_rate_within_cvs_flag || fixed_pic_rate_general_flag) {
+                hdr.elemental_duration_in_tc_minus1[i] = m_reader.getUEGolomb();
+            } else {
+                low_delay_hrd_flag = m_reader.getBit();
+            }
+            hdr.flags.fixed_pic_rate_general_flag |= fixed_pic_rate_general_flag << i;
+            hdr.flags.fixed_pic_rate_within_cvs_flag |= fixed_pic_rate_within_cvs_flag << i;
+            hdr.flags.low_delay_hrd_flag |= low_delay_hrd_flag << i;
+
+            if (!low_delay_hrd_flag) {
+                hdr.cpb_cnt_minus1[i] = m_reader.getUEGolomb();
+            }
+
+            if (hdr.nal_hrd_parameters_present_flag) {
+                parseSubLayerHRD(hdr.nal_params[i], hdr.cpb_cnt_minus1[i], hdr.sub_pic_hrd_params_present_flag);
+            }
+
+            if (hdr.vcl_hrd_parameters_present_flag) {
+                parseSubLayerHRD(hdr.vcl_params[i], hdr.cpb_cnt_minus1[i], hdr.sub_pic_hrd_params_present_flag);
+            }
+        }
+    }
+
+    void parseHEVCVPS(const uint8_t *data, size_t size) {
+        const auto vps = unnal(data + 6, size - 6);
+
+        m_reader.set(vps.data(), vps.size());
+
+        uint8_t vps_video_parameter_set_id = m_reader.getBits(4);
+        uint8_t vps_base_layer_internal_flag = m_reader.getBit();
+        uint8_t vps_base_layer_available_flag = m_reader.getBit();
+        uint8_t vps_max_layers_minus1 = m_reader.getBits(6);
+        uint8_t vps_max_sub_layers_minus1 = m_reader.getBits(3);
+        uint8_t vps_temporal_id_nesting_flag = m_reader.getBit();
+        uint16_t vps_reserved_0xffff_16bits = m_reader.getBits(16);
+
+        RGYHEVCVPSProfileLevelTier vps_profile_level_tier = { 0 };
+        parseProfileLevelTier(vps_profile_level_tier, vps_max_sub_layers_minus1 + 1);
+
+        uint8_t vps_sub_layer_ordering_info_present_flag = m_reader.getBit();
+        for (int i = (vps_sub_layer_ordering_info_present_flag ? 0 : vps_max_sub_layers_minus1); i <= vps_max_sub_layers_minus1; i++) {
+            uint8_t vps_max_dec_pic_buffering_minus1 = m_reader.getUEGolomb();
+            uint8_t vps_max_num_reorder_pics = m_reader.getUEGolomb();
+            uint8_t vps_max_latency_increase_plus1 = m_reader.getUEGolomb();
+            vps_max_latency_increase_plus1 = vps_max_latency_increase_plus1;
+        }
+        uint8_t vps_max_layer_id = m_reader.getBits(6);
+        uint16_t vps_num_layer_sets_minus1 = m_reader.getUEGolomb();
+
+        std::vector<uint8_t> layer_id_included_flag(vps_num_layer_sets_minus1 + 1);
+        for (int i = 1; i < vps_num_layer_sets_minus1+1; i++) {
+            for (int j = 0; j <= vps_max_layer_id; j++) {
+                layer_id_included_flag[i] |= m_reader.getBit() << j;
+            }
+        }
+
+        RGYHEVCHdrParams hdr = { 0 };
+        uint8_t vps_timing_info_present_flag = m_reader.getBit();
+        if (vps_timing_info_present_flag) {
+            uint32_t vps_num_units_in_tick = m_reader.getBits(32);
+            uint32_t vps_time_scale = m_reader.getBits(32);
+            uint8_t vps_poc_proportional_to_timing_flag = m_reader.getBit();
+            if (vps_poc_proportional_to_timing_flag) {
+                uint32_t vps_num_ticks_poc_diff_one_minus1 = m_reader.getUEGolomb();
+            }
+            uint32_t vps_num_hrd_parameters = m_reader.getUEGolomb();
+            for (int i = 0; i < vps_num_hrd_parameters; i++) {
+                uint32_t vps_hrd_layer_set_id = m_reader.getUEGolomb();
+                uint8_t cprms_present_flag = 1;
+                if (i > 0) {
+                    cprms_present_flag = m_reader.getBit();
+                }
+                parseHEVCHRD(hdr, cprms_present_flag, vps_max_sub_layers_minus1 + 1);
+            }
+        }
+        uint8_t vps_extension_flag = m_reader.getBit();
+        vps_extension_flag = vps_extension_flag;
+    }
+};
+#endif

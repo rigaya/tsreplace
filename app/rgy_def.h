@@ -477,15 +477,71 @@ const CX_DESC list_videoformat[] = {
     { NULL, 0 }
 };
 
+
+enum RGYDOVIProfile {
+    RGY_DOVI_PROFILE_UNSET = 0,
+    RGY_DOVI_PROFILE_COPY  = -1,
+    RGY_DOVI_PROFILE_50    = 50,
+    RGY_DOVI_PROFILE_81    = 81,
+    RGY_DOVI_PROFILE_82    = 82,
+    RGY_DOVI_PROFILE_84    = 84,
+    RGY_DOVI_PROFILE_OTHER = 100,
+};
+
 const CX_DESC list_dovi_profile[] = {
-    { _T("unset"), 0 },
-    { _T("5.0"),  50 },
-    { _T("8.1"),  81 },
-    { _T("8.2"),  82 },
-    { _T("8.4"),  84 },
+    { _T("unset"), RGY_DOVI_PROFILE_UNSET },
+    { _T("copy"),  RGY_DOVI_PROFILE_COPY },
+    { _T("5.0"),   RGY_DOVI_PROFILE_50 },
+    { _T("8.1"),   RGY_DOVI_PROFILE_81 },
+    { _T("8.2"),   RGY_DOVI_PROFILE_82 },
+    { _T("8.4"),   RGY_DOVI_PROFILE_84 },
     { NULL, 0 }
 };
 
+const CX_DESC list_dovi_profile_parse[] = {
+    { _T("unset"), RGY_DOVI_PROFILE_UNSET },
+    { _T("copy"),  RGY_DOVI_PROFILE_COPY },
+    { _T("5.0"),   RGY_DOVI_PROFILE_50 },
+    { _T("5"),     RGY_DOVI_PROFILE_50 },
+    { _T("8.1"),   RGY_DOVI_PROFILE_81 },
+    { _T("8.2"),   RGY_DOVI_PROFILE_82 },
+    { _T("8.4"),   RGY_DOVI_PROFILE_84 },
+    { NULL, 0 }
+};
+
+struct RGYDOVIRpuActiveAreaOffsets {
+    bool enable;
+    uint16_t left, top, right, bottom;
+
+    RGYDOVIRpuActiveAreaOffsets() : enable(false), left(0), top(0), right(0), bottom(0) {};
+    bool operator==(const RGYDOVIRpuActiveAreaOffsets &x) const {
+        return enable == x.enable
+            && left == x.left
+            && top == x.top
+            && right == x.right
+            && bottom == x.bottom;
+    }
+    bool operator!=(const RGYDOVIRpuActiveAreaOffsets &x) const {
+        return !(*this == x);
+    }
+};
+
+class RGYDOVIRpuConvertParam {
+public:
+    bool convertProfile;
+    bool removeMapping;
+    RGYDOVIRpuActiveAreaOffsets activeAreaOffsets;
+    RGYDOVIRpuConvertParam() : convertProfile(true), removeMapping(false), activeAreaOffsets() {};
+    virtual ~RGYDOVIRpuConvertParam() {};
+    bool operator==(const RGYDOVIRpuConvertParam &x) const {
+        return convertProfile == x.convertProfile
+            && removeMapping == x.removeMapping
+            && activeAreaOffsets == x.activeAreaOffsets;
+    }
+    bool operator!=(const RGYDOVIRpuConvertParam &x) const {
+        return !(*this == x);
+    }
+};
 
 // 1st luma line > |X   X ...    |3 4 X ...     X が輝度ピクセル位置
 //                 |             |1 2           1-6 are possible chroma positions
@@ -626,6 +682,34 @@ struct VideoVUIInfo {
             matrix = x.matrix;
         }
         if (transfer == defaultVUI.transfer) {
+            transfer = x.transfer;
+        }
+        if (format == defaultVUI.format) {
+            format = x.format;
+        }
+        if (colorrange == defaultVUI.colorrange) {
+            colorrange = x.colorrange;
+        }
+        if (chromaloc == defaultVUI.chromaloc) {
+            chromaloc = x.chromaloc;
+        }
+        setDescriptPreset();
+    }
+
+    void setIfUnsetUnknwonAuto(const VideoVUIInfo &x) {
+        const auto defaultVUI = VideoVUIInfo();
+        if (   colorprim == RGY_PRIM_UNSPECIFIED
+            || colorprim == RGY_PRIM_UNKNOWN
+            || colorprim == RGY_PRIM_AUTO) {
+            colorprim = x.colorprim;
+        }
+        if (   matrix == RGY_MATRIX_UNSPECIFIED
+            || matrix == RGY_MATRIX_AUTO) {
+            matrix = x.matrix;
+        }
+        if (   transfer == RGY_TRANSFER_UNKNOWN
+            || transfer == RGY_TRANSFER_UNSPECIFIED
+            || transfer == RGY_TRANSFER_AUTO) {
             transfer = x.transfer;
         }
         if (format == defaultVUI.format) {
