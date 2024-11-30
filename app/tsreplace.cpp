@@ -1820,6 +1820,7 @@ RGY_ERR TSReplace::initEncoder() {
 
     // エンコーダーに転送するスレッドを起動
     m_threadSendEncoder = std::make_unique<std::thread>([&]() {
+        RGY_ERR sts = RGY_ERR_NONE;
         AddMessage(RGY_LOG_DEBUG, _T("Start thread to send input ts to encoder.\n"));
         std::vector<uint8_t> readBuffer(1 * 1024 * 1024);
         while (!m_inputAbort && m_encoder && m_encoder->processAlive()) {
@@ -1830,12 +1831,17 @@ RGY_ERR TSReplace::initEncoder() {
             const auto bytes_sent = (decltype(bytes_read))m_encoder->stdInFpWrite(readBuffer.data(), (size_t)bytes_read);
             if (bytes_sent != bytes_read) {
                 AddMessage(RGY_LOG_ERROR, _T("Failed to send bitstream to encoder.\n"));
+                sts = RGY_ERR_UNKNOWN;
                 break;
             }
             m_encoder->stdInFpFlush();
         }
         AddMessage(RGY_LOG_DEBUG, _T("Reached encoder input EOF.\n"));
         m_encoder->stdInFpClose();
+        if (sts != RGY_ERR_NONE) {
+            m_inputAbort = true;
+        }
+        return sts;
     });
 
     m_encQueueOut = std::make_unique<RGYQueueBuffer>();
