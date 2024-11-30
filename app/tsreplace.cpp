@@ -1192,7 +1192,7 @@ RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
                 if (m_queueInputPreAnalysis) queues.push_back({ false, m_queueInputPreAnalysis.get(), _T("preanalysis") });
 
                 // すべてのキューに対してデータを送信できるまでループ
-                for (size_t queueSent = 0; queueSent < queues.size(); ) {
+                for (size_t queueSent = 0; !m_inputAbort && queueSent < queues.size(); ) {
                     bool emptyQueueExists = false;
                     for (auto& queue : queues) {
                         if (queue.sent) {
