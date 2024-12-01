@@ -401,7 +401,7 @@ public:
     }
     void init(int64_t bufSize = 1 * 1024 * 1024) {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_ptr = (uint8_t *)malloc(bufSize);
+        m_ptr = (uint8_t *)malloc((size_t)bufSize);
         m_capacity = bufSize;
     }
     int64_t size() const {
@@ -425,20 +425,20 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_size + addSize > m_capacity) {
             m_capacity = (std::max)(m_capacity * 2, m_size + addSize);
-            auto tmp = (uint8_t *)malloc(m_capacity);
+            auto tmp = (uint8_t *)malloc((size_t)m_capacity);
             if (m_size > 0) {
-                memcpy(tmp, m_ptr + m_offset, m_size);
+                memcpy(tmp, m_ptr + m_offset, (size_t)m_size);
             }
             free(m_ptr);
             m_ptr = tmp;
             m_offset = 0;
         } else if (m_size + m_offset + addSize > m_capacity) {
             if (m_size > 0) {
-                memmove(m_ptr, m_ptr + m_offset, m_size);
+                memmove(m_ptr, m_ptr + m_offset, (size_t)m_size);
             }
             m_offset = 0;
         }
-        memcpy(m_ptr + m_offset + m_size, data, addSize);
+        memcpy(m_ptr + m_offset + m_size, data, (size_t)addSize);
         m_size += addSize;
         SetEvent(m_heEventPushed);
         return true;
@@ -466,7 +466,7 @@ protected:
 
         std::lock_guard<std::mutex> lock(m_mutex);
         int64_t copy_size = (std::min)(maxSize, m_size);
-        memcpy(data, m_ptr + m_offset, copy_size);
+        memcpy(data, m_ptr + m_offset, (size_t)copy_size);
         m_offset += copy_size;
         m_size -= copy_size;
         if (m_size == 0) {
