@@ -17,29 +17,34 @@ jobs:
           - dockerimg: ubuntu2004
             pkgtype: deb
             platform: amd64
+            os: ubuntu-24.04
           - dockerimg: ubuntu2204
             pkgtype: deb
             platform: amd64
+            os: ubuntu-24.04
           - dockerimg: ubuntu2404
             pkgtype: deb
             platform: amd64
+            os: ubuntu-24.04
           - dockerimg: ubuntu2004
             pkgtype: deb
             platform: arm64
+            os: ubuntu-24.04-arm64
           - dockerimg: ubuntu2204
             pkgtype: deb
             platform: arm64
+            os: ubuntu-24.04-arm64
           - dockerimg: ubuntu2404
             pkgtype: deb
             platform: arm64
+            os: ubuntu-24.04-arm64
 
     env:
       DOCKER_FILE:  docker/docker_${{ matrix.dockerimg }}
       DOCKER_IMAGE: ${{ matrix.dockerimg }}
       PKG_TYPE: ${{ matrix.pkgtype }}
-
+    runs-on: ${{ matrix.os }}
     name: Upload Release Asset
-    runs-on: ubuntu-latest
     steps:
       - name: Prepare
         id: prep
@@ -64,10 +69,6 @@ jobs:
         with:
           submodules: true
           fetch-depth: 0
-
-      - name: Set up QEMU
-        if: matrix.platform != 'amd64'
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         id: buildx
