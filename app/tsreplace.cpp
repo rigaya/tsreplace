@@ -143,8 +143,11 @@ TSRReplaceParams::TSRReplaceParams() :
     addHeaders(true),
     removeTypeD(false),
     removeNonTargetService(true),
-    selectService(0) {
+    selectService(0),
+    copyFileTs(false) {
 }
+
+
 
 TSReplaceVideo::TSReplaceVideo(std::shared_ptr<RGYLog> log) :
     m_filename(),
@@ -984,11 +987,13 @@ TSReplace::TSReplace() :
     m_removeTypeD(false),
     m_removeNonTargetService(true),
     m_selectService(0),
+    m_copyFileTs(false),
     m_parseNalH264(get_parse_nal_unit_h264_func()),
     m_parseNalHevc(get_parse_nal_unit_hevc_func()),
     m_encoder(),
     m_encThreadOut(),
     m_encThreadErr(),
+
     m_encQueueOut() {
 
 }
@@ -1041,6 +1046,15 @@ RGY_ERR TSReplace::close() {
         AddMessage(RGY_LOG_DEBUG, _T("Close Encoder.\n"));
         m_encoder.reset();
     }
+    m_fpTSIn.reset();
+    m_fpTSOut.reset();
+    if (m_copyFileTs
+        && _tcscmp(m_fileOut.c_str(), _T("-")) != 0
+        && _tcscmp(m_fileTS.c_str(), _T("-")) != 0
+        && rgy_file_exists(m_fileOut.c_str())
+        && rgy_file_exists(m_fileTS.c_str())) {
+        copyFileTimestamps(m_fileOut.c_str(), m_fileTS.c_str());
+    }
     return sts;
 }
 
@@ -1054,6 +1068,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_removeTypeD = prms.removeTypeD;
     m_selectService = prms.selectService;
     m_removeNonTargetService = prms.removeNonTargetService;
+    m_copyFileTs = prms.copyFileTs;
 
     AddMessage(RGY_LOG_INFO, _T("Output  file: \"%s\".\n"), prms.output.c_str());
     AddMessage(RGY_LOG_INFO, _T("Input   file: \"%s\".\n"), prms.input.c_str());
@@ -1079,6 +1094,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         }
     }
     AddMessage(RGY_LOG_INFO, _T("Preserve Other Services: %s.\n"), m_removeNonTargetService ? _T("off") : _T("on"));
+    AddMessage(RGY_LOG_INFO, _T("Copy File Timestamp: %s.\n"), m_copyFileTs ? _T("on") : _T("off"));
 
     if (_tcscmp(m_fileTS.c_str(), _T("-")) != 0) {
         AddMessage(RGY_LOG_DEBUG, _T("Open input file \"%s\".\n"), m_fileTS.c_str());
@@ -2049,6 +2065,7 @@ RGY_ERR TSReplace::restruct() {
     return RGY_ERR_NONE;
 }
 
+
 #if defined(_WIN32) || defined(_WIN64)
 static bool check_locale_is_ja() {
     const WORD LangID_ja_JP = MAKELANGID(LANG_JAPANESE, SUBLANG_JAPANESE_JAPAN);
@@ -2082,9 +2099,11 @@ static void show_help() {
         _T("                                            select by service order in PAT\n");
         _T("\n")
         _T("   --preserve-other-services    preserve packets of not selected service(s)\n")
+        _T("   --copy-filets                copy file timestamp\n")
         _T("\n")
         _T("   --start-point <string>       set start point\n")
         _T("                                 keyframe, firstframe, firstpacket\n");
+
         _T("   --(no-)add-aud               auto insert aud unit\n")
         _T("   --(no-)add-headers           auto insert headers\n")
         _T("   --(no-)remove-typed          remove type-d packets\n")
@@ -2297,6 +2316,15 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
         prm.removeNonTargetService = true;
         return 0;
     }
+    if (IS_OPTION("copy-filets")) {
+        prm.copyFileTs = true;
+        return 0;
+    }
+    if (IS_OPTION("no-copy-filets")) {
+        prm.copyFileTs = false;
+        return 0;
+    }
+
     if (IS_OPTION("log-level")) { // 最初に読み取り済み
         i++;
         return 0;

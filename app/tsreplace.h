@@ -206,6 +206,8 @@ struct TSRReplaceParams {
     bool removeTypeD;
     bool removeNonTargetService;
     int selectService;
+    bool copyFileTs;
+
 
     TSRReplaceParams();
 };
@@ -313,7 +315,9 @@ protected:
     bool m_removeTypeD; // データの削除
     bool m_removeNonTargetService; // 非対象serviceの削除
     int m_selectService; // 出力するserviceの番号
+    bool m_copyFileTs; // ファイルのタイムスタンプをコピー
     decltype(parse_nal_unit_h264_c) *m_parseNalH264; // H.264用のnal unit分解関数へのポインタ
+
     decltype(parse_nal_unit_hevc_c) *m_parseNalHevc; // HEVC用のnal unit分解関数へのポインタ
 
     std::unique_ptr<RGYPipeProcess> m_encoder; // エンコーダプロセス
