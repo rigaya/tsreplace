@@ -198,6 +198,7 @@ struct TSRReplaceParams {
     tstring replacefile;
     tstring replacefileformat;
     tstring output;
+    tstring logfile;
     TSRReplaceStartPoint startpoint;
     tstring encoderPath;
     std::vector<tstring> encoderArgs;

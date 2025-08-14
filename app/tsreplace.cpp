@@ -138,6 +138,7 @@ TSRReplaceParams::TSRReplaceParams() :
     replacefile(),
     replacefileformat(),
     output(),
+    logfile(),
     startpoint(TSRReplaceStartPoint::KeyframPts),
     addAud(true),
     addHeaders(true),
@@ -2110,6 +2111,7 @@ static void show_help() {
         _T("\n")
         _T("   --replace-format <string>    set replace file format\n")
         _T("\n")
+        _T("   --log <filename>             set log file\n")
         _T("   --log-level <string>         set log level\n")
         _T("                                 debug, info(default), warn, error\n");
      
@@ -2325,6 +2327,11 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
         return 0;
     }
 
+    if (IS_OPTION("log")) {
+        i++;
+        prm.logfile = strInput[i];
+        return 0;
+    }
     if (IS_OPTION("log-level")) { // 最初に読み取り済み
         i++;
         return 0;
@@ -2465,7 +2472,7 @@ int _tmain(const int argc, const TCHAR **argv) {
         return 1;
     }
 
-    auto log = std::make_shared<RGYLog>(nullptr, loglevel);
+    auto log = std::make_shared<RGYLog>(prm.logfile.length() > 0 ? prm.logfile.c_str() : nullptr, loglevel);
     log->write(RGY_LOG_INFO, RGY_LOGT_APP, _T("%s\n"), get_app_version());
     TSReplace restruct;
     auto err = restruct.init(log, prm);
