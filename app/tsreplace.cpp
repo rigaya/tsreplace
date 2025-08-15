@@ -2095,15 +2095,15 @@ static void show_help() {
         _T("         which input should be stdin and output should be stdout\n")
         _T("\n")
         _T("-s,--service <int> or <string>  set service replace\n")
-        _T("                                 <int>     set service id\n");
-        _T("                                 <string>  1st, 2nd, 3rd, ...\n");
-        _T("                                            select by service order in PAT\n");
+        _T("                                 <int>     set service id\n")
+        _T("                                 <string>  1st, 2nd, 3rd, ...\n")
+        _T("                                            select by service order in PAT\n")
         _T("\n")
         _T("   --preserve-other-services    preserve packets of not selected service(s)\n")
         _T("   --copy-filets                copy file timestamp\n")
         _T("\n")
         _T("   --start-point <string>       set start point\n")
-        _T("                                 keyframe, firstframe, firstpacket\n");
+        _T("                                 keyframe, firstframe, firstpacket\n")
 
         _T("   --(no-)add-aud               auto insert aud unit\n")
         _T("   --(no-)add-headers           auto insert headers\n")
