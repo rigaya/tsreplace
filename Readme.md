@@ -205,6 +205,16 @@ timestampを保持できるコンテナ入りの映像を想定しており、ra
 
 具体的には、データ放送で使用されているISO/IEC 13818-6 type DのPIDストリームのパケットを削除します。
 
+### --log &lt;string&gt;
+ログを指定のファイルに出力します。
+
+### --log-level &lt;string&gt;
+ログ出力のレベルを下記から選択します。
+
+```
+- debug, info(default), warn, error
+```
+
 ---
 
 ## 制限事項
