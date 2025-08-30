@@ -463,49 +463,68 @@ std::vector<uint8_t> RGYHDRMetadata::gen_obu() const {
     return data;
 }
 
-int convert_dovi_rpu(std::vector<uint8_t>& data, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm) {
+std::pair<int, std::string> convert_dovi_rpu(std::vector<uint8_t>& data, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm) {
+    std::string err_mes;
 #if ENABLE_LIBDOVI
     if (!prm) {
-        return 0;
+        return { 0, err_mes };
     }
     if (data.size() == 0) {
-        return 0;
+        return { 0, err_mes };
     }
     if (prm->convertProfile || prm->activeAreaOffsets.enable || prm->removeMapping) {
         std::unique_ptr<DoviRpuOpaque, decltype(&dovi_rpu_free)> rpu(dovi_parse_rpu(data.data(), data.size()), dovi_rpu_free);
         if (!rpu) {
-            return 1;
+            return { 1, dovi_rpu_get_error(rpu.get()) };
         }
         std::unique_ptr<const DoviRpuDataHeader, decltype(&dovi_rpu_free_header)> header(dovi_rpu_get_header(rpu.get()), dovi_rpu_free_header);
         if (!header) {
-            return 1;
+            return { 1, dovi_rpu_get_error(rpu.get()) };
         }
+        bool converted = false;
         const auto dovi_profile = header->guessed_profile;
+        auto doviProfileSrc = RGY_DOVI_PROFILE_OTHER;
+        switch (dovi_profile) {
+        case 5:  doviProfileSrc = RGY_DOVI_PROFILE_50; break;
+        case 7:  doviProfileSrc = RGY_DOVI_PROFILE_70; break;
+        case 8:  doviProfileSrc = RGY_DOVI_PROFILE_81; break;
+        case 10: doviProfileSrc = RGY_DOVI_PROFILE_100; break;
+        default: doviProfileSrc = RGY_DOVI_PROFILE_OTHER; break;
+        }
         if (prm->convertProfile
-            && dovi_profile == 7
-            && (doviProfileDst == RGY_DOVI_PROFILE_81 || doviProfileDst == RGY_DOVI_PROFILE_COPY)) {
+            && ((doviProfileDst != doviProfileSrc
+                && doviProfileDst == RGY_DOVI_PROFILE_81
+                && (doviProfileSrc != RGY_DOVI_PROFILE_OTHER
+                 && doviProfileSrc != RGY_DOVI_PROFILE_81
+                 && doviProfileSrc != RGY_DOVI_PROFILE_100)) // dovi_convert_rpu_with_modeのmode=2が対応しているのは profile 5, 7, 8 のみ
+             || (dovi_profile == 7 && doviProfileDst == RGY_DOVI_PROFILE_COPY))) {
             const int ret = dovi_convert_rpu_with_mode(rpu.get(), 2);
             if (ret != 0) {
-                return 1;
+                return { 1, dovi_rpu_get_error(rpu.get()) };
             }
+            converted = true;
         }
         if (prm->activeAreaOffsets.enable) {
             dovi_rpu_set_active_area_offsets(rpu.get(),
                 prm->activeAreaOffsets.left, prm->activeAreaOffsets.right, prm->activeAreaOffsets.top, prm->activeAreaOffsets.bottom);
+            converted = true;
         }
         if (prm->removeMapping) {
             dovi_rpu_remove_mapping(rpu.get());
+            converted = true;
         }
-        std::unique_ptr<const DoviData, decltype(&dovi_data_free)> rpu_data(dovi_write_rpu(rpu.get()), dovi_data_free);
-        if (!rpu_data) {
-            return 1;
+        if (converted) {
+            std::unique_ptr<const DoviData, decltype(&dovi_data_free)> rpu_data(dovi_write_rpu(rpu.get()), dovi_data_free);
+            if (!rpu_data) {
+                return { 1, dovi_rpu_get_error(rpu.get()) };
+            }
+            data.resize(rpu_data->len);
+            memcpy(data.data(), rpu_data->data, rpu_data->len);
         }
-        data.resize(rpu_data->len);
-        memcpy(data.data(), rpu_data->data, rpu_data->len);
     }
-    return 0;
+    return { 0, err_mes };
 #else
-    return (prm) ? 1 : 0;
+    return (prm) ? std::pair<int, std::string>{ 1, "libdovi not supported with this build." } : std::pair<int, std::string>{ 0, err_mes };
 #endif // ENABLE_LIBDOVI
 }
 
@@ -577,13 +596,13 @@ int DOVIRpu::get_next_rpu(std::vector<uint8_t>& bytes, const RGYDOVIProfile dovi
         return 1;
     }
 
-    bytes.resize(next_size);
+    std::vector<uint8_t> tmpbuf(next_size);
     const auto dataptr = m_buffer.data() + m_dataoffset;
-    memcpy(bytes.data(), dataptr, next_size);
-    auto output = unnal(bytes.data(), bytes.size());
+    memcpy(tmpbuf.data(), dataptr, next_size);
+    bytes = unnal(tmpbuf.data(), tmpbuf.size());
     m_dataoffset += next_size;
     m_datasize -= next_size;
-    return convert_dovi_rpu(output, doviProfileDst, prm);
+    return convert_dovi_rpu(bytes, doviProfileDst, prm).first;
 }
 
 int DOVIRpu::get_next_rpu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id) {
@@ -624,22 +643,59 @@ int DOVIRpu::get_next_rpu_nal(std::vector<uint8_t>& bytes, const RGYDOVIProfile 
     return 0;
 }
 
+std::vector<uint8_t> DOVIRpu::wrap_rpu_av1_obu(const std::vector<uint8_t>& rpu) {
+    int data_fin_size = (int)rpu.size();
+    while (data_fin_size > 0 && rpu[data_fin_size - 1] == 0) {
+        data_fin_size--;
+    }
+
+    RGYBitWriter writer;
+    writer.write_n(0, 2);
+    writer.write_n(6, 3);
+    writer.write_n(31, 5);
+    write_av1_variable_bits(writer, 225, 5);
+    writer.write_n(0, 4);
+    writer.write(true);
+    write_av1_variable_bits(writer, data_fin_size - 1, 8);
+    for (int i = 1; i < data_fin_size; i++) {
+        writer.write_n(rpu[i], 8);
+    }
+    writer.write_n(0, 5);
+    writer.write_n(1, 2);
+    writer.write_n(0, 2);
+    writer.write_n(0, 8);
+    while (!writer.aligned()) {
+        writer.write(true);
+    }
+    auto buf = make_vector<uint8_t>(av1_itut_t35_header_dovirpu);
+    vector_cat(buf, writer.get_data());
+    return buf;
+}
+
 int DOVIRpu::get_next_rpu_obu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id) {
     std::vector<uint8_t> tmp;
     if (int ret = get_next_rpu(tmp, doviProfileDst, prm, id); ret != 0) {
         return ret;
     }
-
-    auto rpu = unnal(tmp.data(), tmp.size());
-
     std::vector<uint8_t> buf;
-    if (rpu.size() > sizeof(av1_itut_t35_header_dovirpu) && memcmp(rpu.data(), av1_itut_t35_header_dovirpu, sizeof(av1_itut_t35_header_dovirpu)) == 0) {
-        buf = rpu;
+    if (tmp.size() > sizeof(av1_itut_t35_header_dovirpu) && memcmp(tmp.data(), av1_itut_t35_header_dovirpu, sizeof(av1_itut_t35_header_dovirpu)) == 0) {
+        buf = tmp;
     } else {
-        buf = make_vector<uint8_t>(av1_itut_t35_header_dovirpu);
-        vector_cat(buf, rpu);
+        buf = wrap_rpu_av1_obu(tmp);
     }
     bytes = gen_av1_obu_metadata(AV1_METADATA_TYPE_ITUT_T35, buf);
+
+    //std::unique_ptr<DoviRpuOpaque, decltype(&dovi_rpu_free)> rpu(dovi_parse_rpu(tmp.data(), tmp.size()), dovi_rpu_free);
+    //if (!rpu) {
+    //    return 1;
+    //}
+    //std::unique_ptr<const DoviData, decltype(&dovi_data_free)> rpu_data(dovi_write_av1_rpu_metadata_obu_t35_complete(rpu.get()), dovi_data_free);
+    //if (!rpu_data) {
+    //    return 1;
+    //}
+    //tmp.resize(rpu_data->len);
+    //memcpy(tmp.data(), rpu_data->data, rpu_data->len);
+    //bytes = gen_av1_obu_metadata(AV1_METADATA_TYPE_ITUT_T35, tmp);
     return 0;
 }
 
@@ -813,9 +869,12 @@ static std::unique_ptr<unit_info> get_unit(const uint8_t *data, const size_t siz
     unit->type = type;
     unit->extension_flag = extension_flag;
     unit->has_size_flag = has_size_flag;
-
+    unit->temporal_id = 0;
+    unit->spatial_id = 0;
     if (extension_flag) {
-        data++;
+        const uint8_t byte2 = *data++;
+        unit->temporal_id = (byte2 & (0xE0)) >> 5;
+        unit->spatial_id = (byte2 & (0x18)) >> 3;
     }
     if (!has_size_flag) {
         size_t ret = size - 1 - extension_flag;
@@ -824,7 +883,7 @@ static std::unique_ptr<unit_info> get_unit(const uint8_t *data, const size_t siz
         size_t obu_size = 0;
         for (int i = 0; i < 8; i++) {
             uint8_t byte = *data++;
-            obu_size |= (int64_t)(byte & 0x7f) << (i * 7);
+            obu_size |= (uint64_t)(byte & 0x7f) << (i * 7);
             if (!(byte & 0x80))
                 break;
         }
@@ -843,7 +902,7 @@ std::deque<std::unique_ptr<unit_info>> parse_unit_av1(const uint8_t *data, const
     std::deque<std::unique_ptr<unit_info>> list;
     int64_t size_remain = (int64_t)size;
     while (size_remain > 0) {
-        auto unit = get_unit(data, size);
+        auto unit = get_unit(data, size_remain);
         const auto unit_size = unit->unit_data.size();
         if (unit_size == 0) {
             break;

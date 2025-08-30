@@ -440,7 +440,7 @@ fi
 SRC_APP=" \
 cpu_info.cpp        gpu_info.cpp \
 rgy_avlog.cpp       rgy_avutil.cpp \
-rgy_bitstream.cpp   rgy_codepage.cpp    rgy_def.cpp \
+rgy_bitstream.cpp   rgy_bitstream_aac.cpp rgy_codepage.cpp    rgy_def.cpp \
 rgy_env.cpp         rgy_err.cpp         rgy_event.cpp \
 rgy_filesystem.cpp  rgy_log.cpp         rgy_memmem.cpp \
 rgy_pipe.cpp        rgy_pipe_linux.cpp \

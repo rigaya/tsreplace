@@ -98,6 +98,10 @@ using RGYChannelLayout = uint64_t;
 using uniuqeRGYChannelLayout = std::unique_ptr<RGYChannelLayout>;
 #endif
 
+#ifndef FF_PROFILE_UNKNOWN
+#define FF_PROFILE_UNKNOWN (AV_PROFILE_UNKNOWN)
+#endif
+
 template<typename T>
 struct RGYAVDeleter {
     RGYAVDeleter() : deleter(nullptr) {};
@@ -202,6 +206,9 @@ static const CodecMap HW_DECODE_LIST[] = {
     { AV_CODEC_ID_MPEG4,      RGY_CODEC_MPEG4 },
 #endif
     { AV_CODEC_ID_AV1,        RGY_CODEC_AV1 },
+#if ENCODER_QSV && defined(AV_CODEC_ID_H266)
+    { AV_CODEC_ID_VVC,        RGY_CODEC_VVC },
+#endif
     //{ AV_CODEC_ID_WMV3,       RGY_CODEC_VC1   },
 };
 
@@ -269,9 +276,9 @@ static tstring errorMesForCodec(const TCHAR *mes, AVCodecID targetCodec) {
 
 static const AVRational HW_NATIVE_TIMEBASE = { 1, (int)HW_TIMEBASE };
 static const TCHAR *AVCODEC_DLL_NAME[] = {
-    _T("avcodec-61.dll"), _T("avformat-61.dll"), _T("avutil-59.dll"), _T("avfilter-10.dll"), _T("swresample-5.dll")
+    _T("avcodec-62.dll"), _T("avformat-62.dll"), _T("avutil-60.dll"), _T("avfilter-11.dll"), _T("swresample-6.dll")
 #if ENABLE_LIBAVDEVICE
-    , _T("avdevice-61.dll")
+    , _T("avdevice-62.dll")
 #endif
 };
 
@@ -293,6 +300,7 @@ static inline int pktFlagGetTrackID(const AVPacket *pkt) {
     return (int)((uint32_t)pkt->flags >> 16);
 }
 
+// av_rescale_qのラッパー (v * from / to)
 int64_t rational_rescale(int64_t v, rgy_rational<int> from, rgy_rational<int> to);
 
 // AVCodecContext::ticks_per_frameの代わり
@@ -307,6 +315,7 @@ AVFieldOrder picstrcut_rgy_to_avfieldorder(RGY_PICSTRUCT picstruct);
 
 //AVFrameのdurationを取得
 int64_t rgy_avframe_get_duration(const AVFrame *frame);
+int64_t& rgy_avframe_get_duration_ref(AVFrame *frame);
 
 //AVFrameのインタレ関連フラグの確認
 bool rgy_avframe_interlaced(const AVFrame *frame);
@@ -389,7 +398,7 @@ uniuqeRGYChannelLayout createChannelLayoutEmpty();
 uniuqeRGYChannelLayout createChannelLayoutCopy(const RGYChannelLayout *ch_layout);
 
 //コーデックのサポートするチャンネルレイアウトを取得
-const RGYChannelLayout *getChannelLayoutSupportedCodec(const AVCodec *codec);
+std::vector<RGYChannelLayout> getChannelLayoutSupportedCodec(const AVCodec *codec);
 
 //チェンネル数をマスクから取得
 int getChannelCount(const uint64_t channel_layout);

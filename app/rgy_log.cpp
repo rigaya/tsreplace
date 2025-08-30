@@ -38,41 +38,46 @@
 #include "rgy_filesystem.h"
 #include "rgy_env.h"
 
-int rgy_print_stderr(int log_level, const TCHAR *mes, void *handle_) {
-    HANDLE handle = handle_;
+int rgy_print_stderr(int log_level, const TCHAR *mes, void *handle_, bool disableColor) {
+    int ret = 0;
+    if (disableColor) {
+        ret = _ftprintf(stderr, mes);
+    } else {
 #if defined(_WIN32) || defined(_WIN64)
-    CONSOLE_SCREEN_BUFFER_INFO csbi = { 0 };
-    static const WORD LOG_COLOR[] = {
-        FOREGROUND_INTENSITY | FOREGROUND_GREEN | FOREGROUND_BLUE, //水色
-        FOREGROUND_INTENSITY | FOREGROUND_GREEN, //緑
-        FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE,
-        FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE,
-        FOREGROUND_INTENSITY | FOREGROUND_GREEN | FOREGROUND_RED, //黄色
-        FOREGROUND_INTENSITY | FOREGROUND_RED //赤
-    };
-    if (handle == NULL) {
-        handle = GetStdHandle(STD_ERROR_HANDLE);
-    }
-    if (handle && log_level != RGY_LOG_INFO) {
-        GetConsoleScreenBufferInfo(handle, &csbi);
-        SetConsoleTextAttribute(handle, LOG_COLOR[clamp(log_level, RGY_LOG_TRACE, RGY_LOG_ERROR) - RGY_LOG_TRACE] | (csbi.wAttributes & 0x00f0));
-    }
-    //このfprintfで"%"が消えてしまわないよう置換する
-    int ret = _ftprintf(stderr, (nullptr == _tcschr(mes, _T('%'))) ? mes : str_replace(tstring(mes), _T("%"), _T("%%")).c_str());
-    if (handle && log_level != RGY_LOG_INFO) {
-        SetConsoleTextAttribute(handle, csbi.wAttributes); //元に戻す
-    }
+        HANDLE handle = handle_;
+        CONSOLE_SCREEN_BUFFER_INFO csbi = { 0 };
+        static const WORD LOG_COLOR[] = {
+            FOREGROUND_INTENSITY | FOREGROUND_GREEN | FOREGROUND_BLUE, //水色
+            FOREGROUND_INTENSITY | FOREGROUND_GREEN, //緑
+            FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE,
+            FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE,
+            FOREGROUND_INTENSITY | FOREGROUND_GREEN | FOREGROUND_RED, //黄色
+            FOREGROUND_INTENSITY | FOREGROUND_RED //赤
+        };
+        if (handle == NULL) {
+            handle = GetStdHandle(STD_ERROR_HANDLE);
+        }
+        if (handle && log_level != RGY_LOG_INFO) {
+            GetConsoleScreenBufferInfo(handle, &csbi);
+            SetConsoleTextAttribute(handle, LOG_COLOR[clamp(log_level, RGY_LOG_TRACE, RGY_LOG_ERROR) - RGY_LOG_TRACE] | (csbi.wAttributes & 0x00f0));
+        }
+        //このfprintfで"%"が消えてしまわないよう置換する
+        ret = _ftprintf(stderr, (nullptr == _tcschr(mes, _T('%'))) ? mes : str_replace(tstring(mes), _T("%"), _T("%%")).c_str());
+        if (handle && log_level != RGY_LOG_INFO) {
+            SetConsoleTextAttribute(handle, csbi.wAttributes); //元に戻す
+        }
 #else
-    static const char *const LOG_COLOR[] = {
-        "\x1b[36m", //水色
-        "\x1b[32m", //緑
-        "\x1b[39m", //デフォルト
-        "\x1b[39m", //デフォルト
-        "\x1b[33m", //黄色
-        "\x1b[31m", //赤
-    };
-    int ret = _ftprintf(stderr, "%s%s%s", LOG_COLOR[clamp(log_level, RGY_LOG_TRACE, RGY_LOG_ERROR) - RGY_LOG_TRACE], mes, LOG_COLOR[RGY_LOG_INFO - RGY_LOG_TRACE]);
+        static const char *const LOG_COLOR[] = {
+            "\x1b[36m", //水色
+            "\x1b[32m", //緑
+            "\x1b[39m", //デフォルト
+            "\x1b[39m", //デフォルト
+            "\x1b[33m", //黄色
+            "\x1b[31m", //赤
+        };
+        ret = _ftprintf(stderr, "%s%s%s", LOG_COLOR[clamp(log_level, RGY_LOG_TRACE, RGY_LOG_ERROR) - RGY_LOG_TRACE], mes, LOG_COLOR[RGY_LOG_INFO - RGY_LOG_TRACE]);
 #endif //#if defined(_WIN32) || defined(_WIN64)
+    }
     fflush(stderr);
     return ret;
 }
@@ -109,6 +114,8 @@ RGYParamLogLevel::RGYParamLogLevel() :
     appcore_(RGY_LOG_INFO),
     appcoreprogress_(RGY_LOG_INFO),
     appcoreresult_(RGY_LOG_INFO),
+    appcoreparallel_(RGY_LOG_INFO),
+    appcoregpuselect_(RGY_LOG_INFO),
     appdevice_(RGY_LOG_INFO),
     appdecode_(RGY_LOG_INFO),
     appinput_(RGY_LOG_INFO),
@@ -130,6 +137,8 @@ bool RGYParamLogLevel::operator==(const RGYParamLogLevel &x) const {
     return appcore_ == x.appcore_
         && appcoreprogress_ == x.appcoreprogress_
         && appcoreresult_ == x.appcoreresult_
+        && appcoreparallel_ == x.appcoreparallel_
+        && appcoregpuselect_ == x.appcoregpuselect_
         && appdevice_ == x.appdevice_
         && appdecode_ == x.appdecode_
         && appinput_ == x.appinput_
@@ -152,6 +161,8 @@ RGYLogLevel RGYParamLogLevel::set(const RGYLogLevel newLogLevel, const RGYLogTyp
 #define LOG_LEVEL_ADD_TYPE(TYPE, VAR) case (TYPE): { prevLevel = (VAR); (VAR) = newLogLevel; } break;
     LOG_LEVEL_ADD_TYPE(RGY_LOGT_CORE_PROGRESS, appcoreprogress_);
     LOG_LEVEL_ADD_TYPE(RGY_LOGT_CORE_RESULT, appcoreresult_);
+    LOG_LEVEL_ADD_TYPE(RGY_LOGT_CORE_PARALLEL, appcoreparallel_);
+    LOG_LEVEL_ADD_TYPE(RGY_LOGT_CORE_GPU_SELECT, appcoregpuselect_);
     LOG_LEVEL_ADD_TYPE(RGY_LOGT_DEV,   appdevice_);
     LOG_LEVEL_ADD_TYPE(RGY_LOGT_DEC,  appdecode_);
     LOG_LEVEL_ADD_TYPE(RGY_LOGT_IN,    appinput_);
@@ -169,12 +180,16 @@ RGYLogLevel RGYParamLogLevel::set(const RGYLogLevel newLogLevel, const RGYLogTyp
         appcore_         = newLogLevel;
         appcoreprogress_ = newLogLevel;
         appcoreresult_   = newLogLevel;
+        appcoreparallel_ = newLogLevel;
+        appcoregpuselect_ = newLogLevel;
         } break;
     case RGY_LOGT_APP: {
         prevLevel        = appcore_;
         appcore_         = newLogLevel;
         appcoreprogress_ = newLogLevel;
         appcoreresult_   = newLogLevel;
+        appcoreparallel_ = newLogLevel;
+        appcoregpuselect_ = newLogLevel;
         appdevice_       = newLogLevel;
         appdecode_       = newLogLevel;
         appinput_        = newLogLevel;
@@ -188,6 +203,8 @@ RGYLogLevel RGYParamLogLevel::set(const RGYLogLevel newLogLevel, const RGYLogTyp
         appcore_         = newLogLevel;
         appcoreprogress_ = newLogLevel;
         appcoreresult_   = newLogLevel;
+        appcoreparallel_ = newLogLevel;
+        appcoregpuselect_ = newLogLevel;
         appdevice_       = newLogLevel;
         appdecode_       = newLogLevel;
         appinput_        = newLogLevel;
@@ -210,6 +227,7 @@ tstring RGYParamLogLevel::to_string() const {
 #define LOG_LEVEL_ADD_TYPE(TYPE, VAR) { if ((VAR) != appcore_) tmp << _T(",") << rgy_log_type_to_str(TYPE) << _T("=") << rgy_log_level_to_str(VAR); }
     LOG_LEVEL_ADD_TYPE(RGY_LOGT_CORE_PROGRESS, appcoreprogress_);
     LOG_LEVEL_ADD_TYPE(RGY_LOGT_CORE_RESULT, appcoreresult_);
+    LOG_LEVEL_ADD_TYPE(RGY_LOGT_CORE_PARALLEL, appcoreparallel_);
     LOG_LEVEL_ADD_TYPE(RGY_LOGT_DEV,   appdevice_);
     LOG_LEVEL_ADD_TYPE(RGY_LOGT_DEC,  appdecode_);
     LOG_LEVEL_ADD_TYPE(RGY_LOGT_IN,    appinput_);
@@ -225,22 +243,24 @@ tstring RGYParamLogLevel::to_string() const {
     return tmp.str();
 }
 
-RGYLog::RGYLog(const TCHAR *pLogFile, const RGYLogLevel log_level, bool showTime, bool addLogLevel) :
+RGYLog::RGYLog(const TCHAR *pLogFile, const RGYLogLevel log_level, bool showTime, bool addLogLevel, bool disableColor) :
     m_nLogLevel(),
-    m_pStrLog(nullptr),
+    m_pStrLog(),
     m_bHtml(false),
     m_showTime(showTime),
     m_addLogLevel(addLogLevel),
+    m_disableColor(disableColor),
     m_mtx() {
     init(pLogFile, RGYParamLogLevel(log_level));
 };
 
-RGYLog::RGYLog(const TCHAR *pLogFile, const RGYParamLogLevel& log_level, bool showTime, bool addLogLevel) :
+RGYLog::RGYLog(const TCHAR *pLogFile, const RGYParamLogLevel& log_level, bool showTime, bool addLogLevel, bool disableColor) :
     m_nLogLevel(),
-    m_pStrLog(nullptr),
+    m_pStrLog(),
     m_bHtml(false),
     m_showTime(showTime),
     m_addLogLevel(addLogLevel),
+    m_disableColor(disableColor),
     m_mtx() {
     init(pLogFile, log_level);
 }
@@ -249,10 +269,12 @@ RGYLog::~RGYLog() {
 }
 
 void RGYLog::init(const TCHAR *pLogFile, const RGYParamLogLevel& log_level) {
-    m_pStrLog = pLogFile;
     m_nLogLevel = log_level;
-    m_mtx.reset(new std::mutex());
+    if (!m_mtx) {
+        m_mtx = std::make_shared<std::mutex>();
+    }
     if (pLogFile != nullptr && _tcslen(pLogFile) > 0) {
+        m_pStrLog = pLogFile;
         CreateDirectoryRecursive(PathRemoveFileSpecFixed(pLogFile).second.c_str());
         FILE *fp = NULL;
         if (_tfopen_s(&fp, pLogFile, _T("a+")) || fp == NULL) {
@@ -280,7 +302,7 @@ void RGYLog::init(const TCHAR *pLogFile, const RGYParamLogLevel& log_level) {
 
 void RGYLog::writeHtmlHeader() {
     FILE *fp = NULL;
-    if (_tfopen_s(&fp, m_pStrLog, _T("wb"))) {
+    if (_tfopen_s(&fp, m_pStrLog.c_str(), _T("wb"))) {
         std::wstring header =
             L"<!DOCTYPE html>\n"
             L"<html lang = \"ja\">\n"
@@ -348,7 +370,7 @@ void RGYLog::writeFileHeader(const TCHAR *pDstFilename) {
         write(RGY_LOG_DEBUG, RGY_LOGT_CORE, _T("OS        %s %s\n"), getOSVersion().c_str(), rgy_is_64bit_os() ? _T("x64") : _T("x86"));
 #endif
         write(RGY_LOG_DEBUG, RGY_LOGT_CORE, _T("CPU Info  %s\n"), cpuInfo);
-#if ENCODER_QSV
+#if 0
         TCHAR gpu_info[1024] = { 0 };
         getGPUInfo(GPU_VENDOR, gpu_info, _countof(gpu_info));
         write(RGY_LOG_DEBUG, RGY_LOGT_CORE, _T("GPU Info  %s\n"), gpu_info);
@@ -426,7 +448,7 @@ void RGYLog::write_log(RGYLogLevel log_level, const RGYLogType logtype, const TC
     char *buffer_ptr = NULL;
     DWORD mode = 0;
     bool stderr_write_to_console = 0 != GetConsoleMode(hStdErr, &mode); //stderrの出力先がコンソールかどうか
-    if (m_pStrLog || !stderr_write_to_console) {
+    if (m_pStrLog.length() > 0 || !stderr_write_to_console) {
         buffer_char = tchar_to_string(buffer, (m_bHtml) ? CP_UTF8 : CP_THREAD_ACP);
         if (m_bHtml) {
             buffer_char = convert_to_html(buffer_char);
@@ -444,10 +466,10 @@ void RGYLog::write_log(RGYLogLevel log_level, const RGYLogType logtype, const TC
     }
 #endif
     std::lock_guard<std::mutex> lock(*m_mtx.get());
-    if (m_pStrLog) {
+    if (m_pStrLog.length() > 0) {
         FILE *fp_log = NULL;
         //logはANSI(まあようはShift-JIS)で保存する
-        if (0 == _tfopen_s(&fp_log, m_pStrLog, (m_bHtml) ? _T("rb+") : _T("a")) && fp_log) {
+        if (0 == _tfopen_s(&fp_log, m_pStrLog.c_str(), (m_bHtml) ? _T("rb+") : _T("a")) && fp_log) {
             if (m_bHtml) {
                 _fseeki64(fp_log, 0, SEEK_END);
                 int64_t pos = _ftelli64(fp_log);
@@ -475,7 +497,7 @@ void RGYLog::write_log(RGYLogLevel log_level, const RGYLogType logtype, const TC
                 }
                 if (stderr_write_to_console) //出力先がコンソールならWCHARで
 #endif
-                    rgy_print_stderr(log_level, line.c_str(), hStdErr);
+                    rgy_print_stderr(log_level, line.c_str(), hStdErr, m_disableColor);
             }
         } else {
 #ifdef UNICODE
@@ -483,7 +505,7 @@ void RGYLog::write_log(RGYLogLevel log_level, const RGYLogType logtype, const TC
                 fprintf(stderr, buffer_ptr);
             if (stderr_write_to_console) //出力先がコンソールならWCHARで
 #endif
-                rgy_print_stderr(log_level, buffer, hStdErr);
+                rgy_print_stderr(log_level, buffer, hStdErr, m_disableColor);
         }
     }
 }

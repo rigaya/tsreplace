@@ -123,6 +123,7 @@ enum RGY_CODEC {
     RGY_CODEC_AV1,
     RGY_CODEC_VVC,
     RGY_CODEC_RAW,
+    RGY_CODEC_AVCODEC,
 
     RGY_CODEC_NUM,
 };
@@ -140,6 +141,7 @@ static tstring CodecToStr(RGY_CODEC codec) {
     case RGY_CODEC_AV1:   return _T("AV1");
     case RGY_CODEC_VVC:   return _T("VVC");
     case RGY_CODEC_RAW:   return _T("RAW");
+    case RGY_CODEC_AVCODEC: return _T("AVCODEC");
     default: return _T("unknown");
     }
 }
@@ -479,12 +481,17 @@ const CX_DESC list_videoformat[] = {
 
 
 enum RGYDOVIProfile {
-    RGY_DOVI_PROFILE_UNSET = 0,
-    RGY_DOVI_PROFILE_COPY  = -1,
-    RGY_DOVI_PROFILE_50    = 50,
-    RGY_DOVI_PROFILE_81    = 81,
-    RGY_DOVI_PROFILE_82    = 82,
-    RGY_DOVI_PROFILE_84    = 84,
+    RGY_DOVI_PROFILE_UNSET =  0,
+    RGY_DOVI_PROFILE_COPY  =  -1,
+    RGY_DOVI_PROFILE_50    =  50,
+    RGY_DOVI_PROFILE_70    =  70,
+    RGY_DOVI_PROFILE_81    =  81,
+    RGY_DOVI_PROFILE_82    =  82,
+    RGY_DOVI_PROFILE_84    =  84,
+    RGY_DOVI_PROFILE_100   = 100,
+    RGY_DOVI_PROFILE_101   = 101,
+    RGY_DOVI_PROFILE_102   = 102,
+    RGY_DOVI_PROFILE_104   = 104,
     RGY_DOVI_PROFILE_OTHER = 100,
 };
 
@@ -495,6 +502,10 @@ const CX_DESC list_dovi_profile[] = {
     { _T("8.1"),   RGY_DOVI_PROFILE_81 },
     { _T("8.2"),   RGY_DOVI_PROFILE_82 },
     { _T("8.4"),   RGY_DOVI_PROFILE_84 },
+    { _T("10.0"),  RGY_DOVI_PROFILE_100 },
+    { _T("10.1"),  RGY_DOVI_PROFILE_101 },
+    { _T("10.2"),  RGY_DOVI_PROFILE_102 },
+    { _T("10.4"),  RGY_DOVI_PROFILE_104 },
     { NULL, 0 }
 };
 
@@ -506,6 +517,11 @@ const CX_DESC list_dovi_profile_parse[] = {
     { _T("8.1"),   RGY_DOVI_PROFILE_81 },
     { _T("8.2"),   RGY_DOVI_PROFILE_82 },
     { _T("8.4"),   RGY_DOVI_PROFILE_84 },
+    { _T("10.0"),  RGY_DOVI_PROFILE_100 },
+    { _T("10"),    RGY_DOVI_PROFILE_100 },
+    { _T("10.1"),  RGY_DOVI_PROFILE_101 },
+    { _T("10.2"),  RGY_DOVI_PROFILE_102 },
+    { _T("10.4"),  RGY_DOVI_PROFILE_104 },
     { NULL, 0 }
 };
 

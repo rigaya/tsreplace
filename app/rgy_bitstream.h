@@ -49,6 +49,8 @@ struct unit_info {
     uint8_t type;
     uint8_t extension_flag;
     uint8_t has_size_flag;
+    int temporal_id;
+    int spatial_id;
     int obu_offset;
     std::vector<uint8_t> unit_data;
 };
@@ -320,7 +322,7 @@ static const uint8_t av1_itut_t35_header_dovirpu[] = {
 
 const DOVIProfile *getDOVIProfile(const int id);
 
-int convert_dovi_rpu(std::vector<uint8_t>& data, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm);
+std::pair<int, std::string> convert_dovi_rpu(std::vector<uint8_t>& data, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm);
 
 class DOVIRpu {
 public:
@@ -333,7 +335,7 @@ public:
     int get_next_rpu_obu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id);
     int get_next_rpu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id, const RGY_CODEC codec);
     const tstring& get_filepath() const;
-
+    static std::vector<uint8_t> wrap_rpu_av1_obu(const std::vector<uint8_t>& rpu);
 protected:
     int fillBuffer();
     int get_next_rpu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm);
@@ -349,5 +351,68 @@ protected:
 
     std::unordered_map<int64_t, std::vector<uint8_t>> m_rpus;
 };
+
+class RGYBitWriter {
+private:
+    std::vector<uint8_t> data;
+    uint8_t current_byte;
+    uint8_t bits_written;
+
+    void flush_byte() {
+        if (bits_written > 0) {
+            // Left-align any remaining bits
+            current_byte <<= (8 - bits_written);
+            data.push_back(current_byte);
+            current_byte = 0;
+            bits_written = 0;
+        }
+    }
+public:
+    RGYBitWriter() : current_byte(0), bits_written(0) {}
+    void write(bool value) {
+        current_byte = (current_byte << 1) | (value ? 1 : 0);
+        bits_written++;
+
+        if (bits_written == 8) {
+            flush_byte();
+        }
+    }
+    void write_n(uint32_t value, uint32_t n) {
+        for (int32_t i = n - 1; i >= 0; i--) {
+            write((value >> i) & 1);
+        }
+    }
+    const std::vector<uint8_t>& get_data() const { return data; }
+    const bool aligned() const { return bits_written == 0; }
+};
+
+static void write_av1_variable_bits(RGYBitWriter& writer, uint32_t value, uint32_t n) {
+    uint32_t max = 1u << n;
+
+    if (value > max) {
+        uint32_t remaining = value;
+
+        while (true) {
+            uint32_t tmp = remaining >> n;
+            uint32_t clipped = tmp << n;
+            remaining -= clipped;
+
+            uint32_t byte = (clipped - max) >> n;
+            writer.write_n(byte, n);
+            writer.write(true); // read_more
+
+            // Stop once the remaining can be written in N bits
+            if (remaining <= max) {
+                break;
+            }
+        }
+
+        writer.write_n(remaining, n);
+    } else {
+        writer.write_n(value, n);
+    }
+
+    writer.write(false);
+}
 
 #endif //__RGY_BITSTREAM_H__

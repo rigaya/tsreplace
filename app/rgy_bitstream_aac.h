@@ -3,7 +3,7 @@
 // -----------------------------------------------------------------------------------------
 // The MIT License
 //
-// Copyright (c) 2011-2016 rigaya
+// Copyright (c) 2023 rigaya
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,34 +25,35 @@
 //
 // --------------------------------------------------------------------------------------------
 
-#pragma once
-#ifndef __RGY_ENV_H__
-#define __RGY_ENV_H__
+#ifndef __RGY_BITSTREAM_AAC_H__
+#define __RGY_BITSTREAM_AAC_H__
 
-#include <memory>
-#include <vector>
-#include <functional>
-#include "rgy_util.h"
+#include <cstdint>
+#include <cstddef>
 
-#if defined(_WIN32) || defined(_WIN64)
-tstring getOSVersion(OSVERSIONINFOEXW *osinfo);
-tstring getOSVersion();
-#else
-tstring getOSVersion();
-#endif
-BOOL rgy_is_64bit_os();
-uint64_t getPhysicalRamSize(uint64_t *ramUsed);
-tstring getEnviromentInfo(int device_id = 0);
+static const int AAC_HEADER_MIN_SIZE = 7;
+static const uint32_t AAC_BLOCK_SAMPLES = 1024;
 
-BOOL check_OS_Win8orLater();
+struct RGYAACHeader {
+    static const int HEADER_BYTE_SIZE = 7;
+    bool id;
+    bool protection;
+    int profile;     // 00 ... main, 01 ... lc, 10 ... ssr
+    int samplerate;
+    bool private_bit;
+    uint32_t channel;
+    bool original;
+    bool home;
+    bool copyright;
+    bool copyright_start;
+    uint32_t aac_frame_length; // AACヘッダを含む
+    int adts_buffer_fullness;
+    int no_raw_data_blocks_in_frame;
 
-#if defined(_WIN32) || defined(_WIN64)
-using unique_handle = std::unique_ptr<std::remove_pointer<HANDLE>::type, std::function<void(HANDLE)>>;
+    static bool is_adts_sync(const uint16_t *ptr);
+    static bool is_valid(const uint8_t *buf, const size_t size);
+    int parse(const uint8_t *buf, const size_t size = RGYAACHeader::HEADER_BYTE_SIZE);
+    int sampleRateIdxToRate(const uint32_t idx);
+};
 
-std::vector<size_t> createChildProcessIDList(const size_t target_pid);
-std::vector<unique_handle> createProcessHandleList(const std::vector<size_t>& list_pid, const wchar_t *handle_type);
-std::vector<std::wstring> createProcessModuleList();
-bool checkIfModuleLoaded(const wchar_t *moduleName);
-#endif
-
-#endif //__RGY_ENV_H__
+#endif //__RGY_BITSTREAM_AAC_H__

@@ -68,6 +68,8 @@ enum RGYLogType {
     RGY_LOGT_CORE_PROGRESS,
     RGY_LOGT_CORE_RESULT,
     RGY_LOGT_HDR10PLUS = RGY_LOGT_CORE_RESULT,
+    RGY_LOGT_CORE_PARALLEL,
+    RGY_LOGT_CORE_GPU_SELECT,
     RGY_LOGT_DEV,
     RGY_LOGT_DEC,
     RGY_LOGT_IN,
@@ -80,6 +82,7 @@ enum RGYLogType {
     RGY_LOGT_LIBASS,
     RGY_LOGT_PERF_MONITOR,
     RGY_LOGT_CAPION2ASS,
+    RGY_LOGT_FIN,
 };
 
 static const std::array<std::pair<RGYLogType, const TCHAR *>, RGY_LOGT_CAPION2ASS - RGY_LOGT_ALL + 1> RGY_LOG_TYPE_STR = {
@@ -89,6 +92,8 @@ static const std::array<std::pair<RGYLogType, const TCHAR *>, RGY_LOGT_CAPION2AS
     std::pair<RGYLogType, const TCHAR *>{ RGY_LOGT_CORE,          _T("core")},
     std::pair<RGYLogType, const TCHAR *>{ RGY_LOGT_CORE_PROGRESS, _T("core_progress")},
     std::pair<RGYLogType, const TCHAR *>{ RGY_LOGT_CORE_RESULT,   _T("core_result")},
+    std::pair<RGYLogType, const TCHAR *>{ RGY_LOGT_CORE_PARALLEL, _T("parallel")},
+    std::pair<RGYLogType, const TCHAR *>{ RGY_LOGT_CORE_GPU_SELECT, _T("gpu_select")},
     std::pair<RGYLogType, const TCHAR *>{ RGY_LOGT_DEC,           _T("decoder")},
     std::pair<RGYLogType, const TCHAR *>{ RGY_LOGT_IN,            _T("input")},
     std::pair<RGYLogType, const TCHAR *>{ RGY_LOGT_OUT,           _T("output")},
@@ -106,6 +111,8 @@ private:
     RGYLogLevel appcore_;
     RGYLogLevel appcoreprogress_;
     RGYLogLevel appcoreresult_;
+    RGYLogLevel appcoreparallel_;
+    RGYLogLevel appcoregpuselect_;
     RGYLogLevel appdevice_;
     RGYLogLevel appdecode_;
     RGYLogLevel appinput_;
@@ -127,6 +134,8 @@ public:
         switch (type) {
         case RGY_LOGT_CORE_PROGRESS: return appcoreprogress_;
         case RGY_LOGT_CORE_RESULT: return appcoreresult_;
+        case RGY_LOGT_CORE_PARALLEL: return appcoreparallel_;
+        case RGY_LOGT_CORE_GPU_SELECT: return appcoregpuselect_;
         case RGY_LOGT_DEC: return appdecode_;
         case RGY_LOGT_DEV: return appdevice_;
         case RGY_LOGT_IN: return appinput_;
@@ -148,20 +157,21 @@ public:
     tstring to_string() const;
 };
 
-int rgy_print_stderr(int log_level, const TCHAR *mes, void *handle = NULL);
+int rgy_print_stderr(int log_level, const TCHAR *mes, void *handle = NULL, bool disableColor = false);
 
 class RGYLog {
 protected:
     RGYParamLogLevel m_nLogLevel;
-    const TCHAR *m_pStrLog;
+    tstring m_pStrLog;
     bool m_bHtml;
     bool m_showTime;
     bool m_addLogLevel;
-    std::unique_ptr<std::mutex> m_mtx;
+    bool m_disableColor;
+    std::shared_ptr<std::mutex> m_mtx;
     static const char *HTML_FOOTER;
 public:
-    RGYLog(const TCHAR *pLogFile, const RGYLogLevel log_level = RGY_LOG_INFO, bool showTime = false, bool addLogLevel = false);
-    RGYLog(const TCHAR *pLogFile, const RGYParamLogLevel& log_level, bool showTime = false, bool addLogLevel = false);
+    RGYLog(const TCHAR *pLogFile, const RGYLogLevel log_level = RGY_LOG_INFO, bool showTime = false, bool addLogLevel = false, bool disableColor = false);
+    RGYLog(const TCHAR *pLogFile, const RGYParamLogLevel& log_level, bool showTime = false, bool addLogLevel = false, bool disableColor = false);
     virtual ~RGYLog();
     void init(const TCHAR *pLogFile, const RGYParamLogLevel& log_level);
     void writeHtmlHeader();
@@ -182,11 +192,14 @@ public:
         return m_nLogLevel.set(newLogLevel, type);
     }
     bool logFileAvail() {
-        return m_pStrLog != nullptr;
+        return m_pStrLog.length() > 0;
     }
     void setLogFile(const TCHAR *pLogFile) {
-        m_pStrLog = pLogFile;
+        m_pStrLog.clear();
+        if (pLogFile) m_pStrLog = pLogFile;
     }
+    void setLock(std::shared_ptr<std::mutex> mtx) { m_mtx = mtx; }
+    std::shared_ptr<std::mutex> getLock() { return m_mtx; }
     virtual void write_log(RGYLogLevel log_level, const RGYLogType logtype, const TCHAR *buffer, bool file_only = false);
     virtual void write(RGYLogLevel log_level, const RGYLogType logtype, const TCHAR *format, ...);
     virtual void write(RGYLogLevel log_level, const RGYLogType logtype, const wchar_t *format, va_list args);

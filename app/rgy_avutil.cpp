@@ -36,6 +36,7 @@ extern "C" {
 #include <libavutil/timestamp.h>
 }
 
+// v * from / to
 int64_t rational_rescale(int64_t v, rgy_rational<int> from, rgy_rational<int> to) {
     return av_rescale_q(v, av_make_q(from), av_make_q(to));
 }
@@ -120,6 +121,15 @@ AVFieldOrder picstrcut_rgy_to_avfieldorder(RGY_PICSTRUCT picstruct) {
 
 //AVFrameのdurationを取得
 int64_t rgy_avframe_get_duration(const AVFrame *frame) {
+#if AV_FRAME_DURATION_AVAIL
+    return frame->duration;
+#else
+    return frame->pkt_duration;
+#endif
+}
+
+//AVFrameのdurationを取得
+int64_t& rgy_avframe_get_duration_ref(AVFrame *frame) {
 #if AV_FRAME_DURATION_AVAIL
     return frame->duration;
 #else
@@ -475,13 +485,27 @@ uniuqeRGYChannelLayout createChannelLayoutCopy(const RGYChannelLayout *ch_layout
     return ch_layout_copy;
 }
 
-const RGYChannelLayout *getChannelLayoutSupportedCodec(const AVCodec *codec) {
+std::vector<RGYChannelLayout> getChannelLayoutSupportedCodec(const AVCodec *codec) {
+    std::vector<RGYChannelLayout> layouts;
+#if LIBAVCODEC_VERSION_MAJOR >= 62
+    const void *ch_layouts = nullptr;
+    int ch_layout_count = 0;
+    avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_CHANNEL_LAYOUT, 0,
+        &ch_layouts, &ch_layout_count);
+    const RGYChannelLayout *channelLayout = (const RGYChannelLayout *)ch_layouts;
+#else
 #if AV_CHANNEL_LAYOUT_STRUCT_AVAIL
     const RGYChannelLayout *channelLayout = codec->ch_layouts;
 #else
     const RGYChannelLayout *channelLayout = codec->channel_layouts;
 #endif
-    return channelLayout;
+#endif
+    if (channelLayout) {
+        for (int i = 0; channelLayoutSet(&channelLayout[i]); i++) {
+            layouts.push_back(channelLayout[i]);
+        }
+    }
+    return layouts;
 }
 
 int getChannelCount(const uint64_t channel_layout) {
@@ -614,11 +638,10 @@ uniuqeRGYChannelLayout getChannelLayoutFromString(const std::string& channel_lay
 
 bool ChannelLayoutExists(const RGYChannelLayout *target, const AVCodec *codec) {
 #if AV_CHANNEL_LAYOUT_STRUCT_AVAIL
-    if (codec->ch_layouts == nullptr) return false;
-    RGYChannelLayout zero;
-    memset(&zero, 0, sizeof(RGYChannelLayout));
-    for (auto ptr = codec->ch_layouts; memcmp(ptr, &zero, sizeof(RGYChannelLayout)) != 0; ptr++) {
-        if (av_channel_layout_compare(target, ptr) == 0) {
+    auto codec_ch_layouts = getChannelLayoutSupportedCodec(codec);
+    if (codec_ch_layouts.size()) return false;
+    for (const auto& chlayout : codec_ch_layouts) {
+        if (av_channel_layout_compare(target, &chlayout) == 0) {
             return true;
         }
     }
@@ -865,7 +888,7 @@ static const auto CSP_PIXFMT_RGY = make_array<std::pair<AVPixelFormat, RGY_CSP>>
     std::make_pair(AV_PIX_FMT_YUV422P,     RGY_CSP_YUV422),
     std::make_pair(AV_PIX_FMT_YUVJ422P,    RGY_CSP_YUV422),
     std::make_pair(AV_PIX_FMT_YUYV422,     RGY_CSP_YUY2),
-    std::make_pair(AV_PIX_FMT_UYVY422,     RGY_CSP_NA),
+    std::make_pair(AV_PIX_FMT_UYVY422,     RGY_CSP_UYVY),
     std::make_pair(AV_PIX_FMT_NV16,        RGY_CSP_NV16),
     std::make_pair(AV_PIX_FMT_NV24,        RGY_CSP_NV24),
     std::make_pair(AV_PIX_FMT_YUV444P,     RGY_CSP_YUV444),
@@ -878,7 +901,7 @@ static const auto CSP_PIXFMT_RGY = make_array<std::pair<AVPixelFormat, RGY_CSP>>
     std::make_pair(AV_PIX_FMT_YUVA420P16LE, RGY_CSP_YUVA420_16),
     std::make_pair(AV_PIX_FMT_YUVA420P10LE, RGY_CSP_YUVA420_10),
     std::make_pair(AV_PIX_FMT_YUVA420P,    RGY_CSP_YUVA420),
-    std::make_pair(AV_PIX_FMT_NV20LE,      RGY_CSP_NA),
+    std::make_pair(AV_PIX_FMT_NV20LE,      RGY_CSP_P210),
     std::make_pair(AV_PIX_FMT_YUV422P16LE, RGY_CSP_YUV422_16),
     std::make_pair(AV_PIX_FMT_YUV422P14LE, RGY_CSP_YUV422_14),
     std::make_pair(AV_PIX_FMT_YUV422P12LE, RGY_CSP_YUV422_12),
@@ -907,6 +930,14 @@ static const auto CSP_PIXFMT_RGY = make_array<std::pair<AVPixelFormat, RGY_CSP>>
 );
 
 MAP_PAIR_0_1(csp, avpixfmt, AVPixelFormat, rgy, RGY_CSP, CSP_PIXFMT_RGY, AV_PIX_FMT_NONE, RGY_CSP_NA);
+
+tstring getAVPixFmtIndex() {
+    tstring mes;
+    for (size_t i = 0; i < CSP_PIXFMT_RGY.size(); i++) {
+        mes += strsprintf(_T("%03d: %s\n"), (int)CSP_PIXFMT_RGY[i].first, av_get_pix_fmt_name(CSP_PIXFMT_RGY[i].first));
+    }
+    return mes;
+}
 
 static const auto RGY_DISPOSITION_TO_AV = make_array<std::pair<tstring, uint32_t>>(
     std::make_pair(_T("default"),          AV_DISPOSITION_DEFAULT),
@@ -971,6 +1002,13 @@ RGYDOVIProfile getStreamDOVIProfile(const AVStream *stream) {
         case 2:  return RGY_DOVI_PROFILE_82;
         case 4:  return RGY_DOVI_PROFILE_84;
         default: return RGY_DOVI_PROFILE_UNSET;
+        }
+    case 10:
+        switch (doviconf->dv_bl_signal_compatibility_id) {
+        case 1:  return RGY_DOVI_PROFILE_101;
+        case 2:  return RGY_DOVI_PROFILE_102;
+        case 4:  return RGY_DOVI_PROFILE_104;
+        default: return RGY_DOVI_PROFILE_100;
         }
     default:
         return RGY_DOVI_PROFILE_UNSET;
