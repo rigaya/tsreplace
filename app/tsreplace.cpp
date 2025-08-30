@@ -276,7 +276,7 @@ RGY_ERR TSReplaceVideo::initVideoBsfs() {
             return RGY_ERR_NULL_PTR;
         }
         m_Demux.video.bsfcCtx = std::unique_ptr<AVBSFContext, RGYAVDeleter<AVBSFContext>>(ctx, RGYAVDeleter<AVBSFContext>(av_bsf_free)); ctx = nullptr;
-        m_Demux.video.bsfcCtx->time_base_in = av_stream_get_codec_timebase(m_Demux.video.stream);
+        m_Demux.video.bsfcCtx->time_base_in = m_Demux.video.stream->time_base;
         if (0 > (ret = avcodec_parameters_copy(m_Demux.video.bsfcCtx->par_in, m_Demux.video.stream->codecpar))) {
             AddMessage(RGY_LOG_ERROR, _T("failed to set parameter for %s: %s.\n"), char_to_tstring(filter->name).c_str(), qsv_av_err2str(ret).c_str());
             return RGY_ERR_NULL_PTR;
@@ -330,7 +330,7 @@ RGY_ERR TSReplaceVideo::initVideoParser() {
             AddMessage(RGY_LOG_ERROR, _T("failed to set codec param to context for parser: %s.\n"), qsv_av_err2str(ret).c_str());
             return RGY_ERR_UNKNOWN;
         }
-        m_Demux.video.codecCtxParser->time_base = av_stream_get_codec_timebase(m_Demux.video.stream);
+        m_Demux.video.codecCtxParser->time_base = m_Demux.video.stream->time_base;
         m_Demux.video.codecCtxParser->pkt_timebase = m_Demux.video.stream->time_base;
         AddMessage(RGY_LOG_DEBUG, _T("initialized %s codec context for parser: time_base: %d/%d, pkt_timebase: %d/%d.\n"),
             char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str(),
@@ -522,13 +522,12 @@ RGY_ERR TSReplaceVideo::initAVReader(const tstring& videofile, RGYQueueBuffer *i
         m_Demux.video.index = *streamIndexFound;
     }
     m_Demux.video.stream = m_Demux.format.formatCtx->streams[m_Demux.video.index];
-    AddMessage(RGY_LOG_INFO, _T("Opened video stream #%d (ID %d (0x%x)), %s, %dx%d (%s), stream time_base %d/%d, codec_timebase %d/%d.\n"),
+    AddMessage(RGY_LOG_INFO, _T("Opened video stream #%d (ID %d (0x%x)), %s, %dx%d (%s), stream time_base %d/%d.\n"),
         m_Demux.video.stream->index, m_Demux.video.stream->id, m_Demux.video.stream->id,
         char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str(),
         m_Demux.video.stream->codecpar->width, m_Demux.video.stream->codecpar->height,
         char_to_tstring(av_pix_fmt_desc_get((AVPixelFormat)m_Demux.video.stream->codecpar->format)->name).c_str(),
-        m_Demux.video.stream->time_base.num, m_Demux.video.stream->time_base.den,
-        av_stream_get_codec_timebase(m_Demux.video.stream).num, av_stream_get_codec_timebase(m_Demux.video.stream).den);
+        m_Demux.video.stream->time_base.num, m_Demux.video.stream->time_base.den);
 
     //必要ならbitstream filterを初期化
     if (m_Demux.video.stream->codecpar->extradata && m_Demux.video.stream->codecpar->extradata[0] == 1) {
@@ -674,7 +673,7 @@ RGY_ERR TSReplaceVideo::initDecoder() {
         return RGY_ERR_UNKNOWN;
     }
 
-    m_Demux.video.codecCtxDecode->time_base = av_stream_get_codec_timebase(m_Demux.video.stream);
+    m_Demux.video.codecCtxDecode->time_base = m_Demux.video.stream->time_base;
     m_Demux.video.codecCtxDecode->pkt_timebase = m_Demux.video.stream->time_base;
     if (0 > (ret = avcodec_open2(m_Demux.video.codecCtxDecode.get(), m_Demux.video.codecDecode, nullptr))) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to open decoder for %s: %s\n"), char_to_tstring(avcodec_get_name(m_Demux.video.stream->codecpar->codec_id)).c_str(), qsv_av_err2str(ret).c_str());
