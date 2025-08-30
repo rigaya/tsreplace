@@ -163,7 +163,7 @@ protected:
         auto lines = split(str, _T("\n"));
         for (const auto &line : lines) {
             if (line[0] != _T('\0')) {
-                m_log->write(log_level, RGY_LOGT_APP, (_T("replace: ") + line + _T("\n")).c_str());
+                m_log->write_log(log_level, RGY_LOGT_APP, (_T("replace: ") + line + _T("\n")).c_str());
             }
         }
     }
@@ -254,7 +254,7 @@ protected:
         auto lines = split(str, _T("\n"));
         for (const auto &line : lines) {
             if (line[0] != _T('\0')) {
-                m_log->write(log_level, RGY_LOGT_APP, (_T("replace: ") + line + _T("\n")).c_str());
+                m_log->write_log(log_level, RGY_LOGT_APP, (_T("replace: ") + line + _T("\n")).c_str());
             }
         }
     }

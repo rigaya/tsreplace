@@ -1890,14 +1890,14 @@ RGY_ERR TSReplace::initEncoder() {
         while (m_encoder->stdErrRead(buffer) >= 0) {
             if (buffer.size() > 0) {
                 auto str = std::string(buffer.data(), buffer.data() + buffer.size());
-                m_log->write(RGY_LOG_INFO, RGY_LOGT_APP, _T("%s"), char_to_tstring(str).c_str());
+                m_log->write_log(RGY_LOG_INFO, RGY_LOGT_APP, char_to_tstring(str).c_str());
                 buffer.clear();
             }
         }
         m_encoder->stdErrRead(buffer);
         if (buffer.size() > 0) {
             auto str = std::string(buffer.data(), buffer.data() + buffer.size());
-            m_log->write(RGY_LOG_INFO, RGY_LOGT_APP, _T("%s"), char_to_tstring(str).c_str());
+            m_log->write_log(RGY_LOG_INFO, RGY_LOGT_APP, char_to_tstring(str).c_str());
             buffer.clear();
         }
         AddMessage(RGY_LOG_DEBUG, _T("Reached encoder stderr EOF.\n"));
@@ -2433,6 +2433,7 @@ int _tmain(const int argc, const TCHAR **argv) {
             return sts;
         }
     }
+    _ftprintf(stderr, _T("ERROR: input file: %s.\n"), prm.input.c_str());
 
     if (prm.input.size() == 0) {
         _ftprintf(stderr, _T("ERROR: input file not set.\n"));
