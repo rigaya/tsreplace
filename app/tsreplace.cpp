@@ -1769,7 +1769,7 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
 
 TSReplace::EncoderType TSReplace::getEncoderType() {
     auto encoder = createRGYPipeProcess();
-    encoder->init(PIPE_MODE_DISABLE, PIPE_MODE_ENABLE, PIPE_MODE_ENABLE | PIPE_MODE_MUXED);
+    encoder->init(PIPE_MODE_DISABLE, PIPE_MODE_ENABLE | PIPE_MODE_ENABLE_FP, PIPE_MODE_ENABLE | PIPE_MODE_ENABLE_FP | PIPE_MODE_MUXED);
 
     auto args = std::vector<tstring>{ m_encoderPath, _T("--version") };
 
