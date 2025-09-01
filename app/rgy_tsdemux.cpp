@@ -31,17 +31,32 @@
 static const uint8_t TS_SYNC_BYTE = 0x47;
 
 template<int unit_size>
-int findsync_unit_size(const uint8_t *data, const int data_size) {
-    const auto checksize = std::min(data_size, unit_size * 32);
+int findsync_unit_size(const uint8_t *data, const int data_size, const bool unit_size_fixed) {
+    const int check_count = 32;
+    int check_ret[unit_size] = { 0 };
+    const auto checksize = std::min(data_size, unit_size * check_count);
     const auto fin = std::min(data_size, unit_size);
     for (int pos = 0; pos < fin; pos++) {
         bool check = true;
         int i = pos;
-        for (; check && i < checksize; i += unit_size) {
+        for (; i < checksize; i += unit_size) {
             check = (data[i] == TS_SYNC_BYTE);
+            if (!check) break;
         }
+        check_ret[pos] = i;
         if (i >= checksize) {
             return pos;
+        }
+    }
+    if (unit_size_fixed) {
+        // うまくいかなかった時、先頭が一番うまくいっている限りそれを選択する
+        bool check = true;
+        for (int pos = 1; pos < fin; pos++) {
+            check = (check_ret[pos] + unit_size < check_ret[0]);
+            if (!check) break;
+        }
+        if (check) {
+            return 0;
         }
     }
     return -1;
@@ -50,9 +65,9 @@ int findsync_unit_size(const uint8_t *data, const int data_size) {
 int findsync(const uint8_t *data, const int data_size, int *unit_size) {
     int pos = data_size;
     switch (*unit_size) {
-    case 188: pos = findsync_unit_size<188>(data, data_size); break;
-    case 192: pos = findsync_unit_size<192>(data, data_size); break;
-    case 204: pos = findsync_unit_size<204>(data, data_size); break;
+    case 188: pos = findsync_unit_size<188>(data, data_size, true); break;
+    case 192: pos = findsync_unit_size<192>(data, data_size, true); break;
+    case 204: pos = findsync_unit_size<204>(data, data_size, true); break;
     default: break;
     }
     if (pos != data_size) {
@@ -62,7 +77,12 @@ int findsync(const uint8_t *data, const int data_size, int *unit_size) {
     for (const auto test_unit_size : { 188, 192, 204 }) {
         if (test_unit_size != orig_unit_size) {
             *unit_size = test_unit_size;
-            pos = findsync(data, data_size, unit_size);
+            switch (*unit_size) {
+            case 188: pos = findsync_unit_size<188>(data, data_size, false); break;
+            case 192: pos = findsync_unit_size<192>(data, data_size, false); break;
+            case 204: pos = findsync_unit_size<204>(data, data_size, false); break;
+            default:  pos = -1; break;
+            }
             if (pos >= 0) {
                 return pos;
             }
@@ -769,7 +789,22 @@ std::tuple<RGY_ERR, std::vector<uniqueRGYTSPacket>> RGYTSPacketSplitter::split(v
 
     while (m_packetSize == 0 || (int)m_readBuf.size() >= m_packetSize) {
         auto offset = findsync(m_readBuf.data(), (int)m_readBuf.size(), &m_packetSize);
-        if (offset < 0) return { RGY_ERR_NONE, std::move(packets) };
+        if (offset < 0) {
+            // 見つからなかった場合、読み飛ばしてその先から見つけなおす
+            int step = m_packetSize ? m_packetSize : 188;
+            for (int dataoffset = step; dataoffset < (int)m_readBuf.size() - step; dataoffset += step) {
+                offset = findsync(m_readBuf.data() + dataoffset, (int)m_readBuf.size() - dataoffset, &m_packetSize);
+                if (offset >= 0) {
+                    offset += dataoffset;
+                    m_log->write(RGY_LOG_WARN, RGY_LOGT_IN, _T("Skip %d byte, data might be corrupted.\n"), offset);
+                    break;
+                }
+                step = m_packetSize ? m_packetSize : 188;
+            }
+        }
+        if (offset < 0) {
+            return { RGY_ERR_NONE, std::move(packets) };
+        }
 
         auto pkt = m_packetContainer.getEmpty();
         pkt->packet.resize(m_packetSize);
