@@ -2437,7 +2437,6 @@ int _tmain(const int argc, const TCHAR **argv) {
             return sts;
         }
     }
-    _ftprintf(stderr, _T("ERROR: input file: %s.\n"), prm.input.c_str());
 
     if (prm.input.size() == 0) {
         _ftprintf(stderr, _T("ERROR: input file not set.\n"));
