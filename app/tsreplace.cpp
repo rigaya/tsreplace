@@ -1742,6 +1742,10 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     if (sts != RGY_ERR_NONE) {
         return sts;
     }
+    // ffmpegは負で返すことがあるので、計算を統一するため正にしなす
+    if (m_vidFirstPacketPTS < 0) m_vidFirstPacketPTS += WRAP_AROUND_VALUE;
+    if (m_vidFirstFramePTS  < 0) m_vidFirstFramePTS  += WRAP_AROUND_VALUE;
+    if (m_vidFirstKeyPTS    < 0) m_vidFirstKeyPTS    += WRAP_AROUND_VALUE;
     // 読み込み側に解析の終了を通知
     m_preAnalysisFin = true;
     originalTS.reset();
