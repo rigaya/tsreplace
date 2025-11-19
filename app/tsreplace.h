@@ -200,6 +200,7 @@ struct TSRReplaceParams {
     tstring output;
     tstring logfile;
     TSRReplaceStartPoint startpoint;
+    int64_t replaceDelay;
     tstring encoderPath;
     std::vector<tstring> encoderArgs;
     bool addAud;
@@ -220,6 +221,10 @@ protected:
         Unknwon,
         HWEncC,
         ffmpeg,
+    };
+    enum class TSROutputState {
+        Cutting,
+        Output,
     };
 public:
     TSReplace();
@@ -325,6 +330,10 @@ protected:
     std::thread m_encThreadOut; // エンコーダからの標準出力を読み取り m_videoReplace に転送するスレッド
     std::thread m_encThreadErr; // エンコーダからの標準エラー出力を読み取るスレッド
     std::unique_ptr<RGYQueueBuffer> m_encQueueOut; // エンコーダ → m_videoReplace への転送用
+
+    // 置換遅延関連
+    int64_t m_replaceDelay;          // --replace-delay で指定された遅延量(90kHz単位)
+    int64_t m_outputStartTimestamp;  // 出力開始点 = m_firstTimestamp + m_replaceDelay
 };
 
 #endif //__TSREPLACE_H__

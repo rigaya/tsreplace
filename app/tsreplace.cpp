@@ -140,6 +140,7 @@ TSRReplaceParams::TSRReplaceParams() :
     output(),
     logfile(),
     startpoint(TSRReplaceStartPoint::KeyframPts),
+    replaceDelay(0),
     addAud(true),
     addHeaders(true),
     removeTypeD(false),
@@ -993,8 +994,9 @@ TSReplace::TSReplace() :
     m_encoder(),
     m_encThreadOut(),
     m_encThreadErr(),
-
-    m_encQueueOut() {
+    m_encQueueOut(),
+    m_replaceDelay(0),
+    m_outputStartTimestamp(TIMESTAMP_INVALID_VALUE) {
 
 }
 TSReplace::~TSReplace() {
@@ -1063,6 +1065,8 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_fileTS = prms.input;
     m_fileOut = prms.output;
     m_startPoint = prms.startpoint;
+    m_outputStartTimestamp = TIMESTAMP_INVALID_VALUE;
+    m_replaceDelay = prms.replaceDelay;
     m_addAud = prms.addAud;
     m_addHeaders = prms.addHeaders;
     m_removeTypeD = prms.removeTypeD;
@@ -1083,6 +1087,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         AddMessage(RGY_LOG_INFO, _T("Encoder Args:%s\n"), str.c_str());
     }
     AddMessage(RGY_LOG_INFO, _T("Start point : %s.\n"), get_cx_desc(list_startpoint, (int)prms.startpoint));
+    AddMessage(RGY_LOG_INFO, _T("Replace delay : %lld (90kHz ticks).\n"), (long long)m_replaceDelay);
     AddMessage(RGY_LOG_INFO, _T("Add AUD     : %s.\n"), m_addAud ? _T("on") : _T("off"));
     AddMessage(RGY_LOG_INFO, _T("Add Headers : %s.\n"), m_addHeaders ? _T("on") : _T("off"));
     AddMessage(RGY_LOG_INFO, _T("Remove TypeD: %s.\n"), m_removeTypeD ? _T("on") : _T("off"));
@@ -1663,9 +1668,9 @@ RGY_ERR TSReplace::writeReplacedVideo() {
 
 int64_t TSReplace::getStartPointPTS() const {
     switch (m_startPoint) {
-    case TSRReplaceStartPoint::FirstPacket:    return m_vidFirstPacketPTS;
-    case TSRReplaceStartPoint::FirstFrame:     return m_vidFirstFramePTS;
-    case TSRReplaceStartPoint::KeyframPts:     return m_vidFirstKeyPTS;
+    case TSRReplaceStartPoint::FirstPacket:    return m_vidFirstPacketPTS + m_replaceDelay;
+    case TSRReplaceStartPoint::FirstFrame:     return m_vidFirstFramePTS + m_replaceDelay;
+    case TSRReplaceStartPoint::KeyframPts:     return m_vidFirstKeyPTS + m_replaceDelay;
     }
     return TIMESTAMP_INVALID_VALUE;
 }
@@ -1746,6 +1751,8 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     if (m_vidFirstPacketPTS < 0) m_vidFirstPacketPTS += WRAP_AROUND_VALUE;
     if (m_vidFirstFramePTS  < 0) m_vidFirstFramePTS  += WRAP_AROUND_VALUE;
     if (m_vidFirstKeyPTS    < 0) m_vidFirstKeyPTS    += WRAP_AROUND_VALUE;
+    // 出力開始点の計算 (最初に時刻を取得できたパケット + replace-delay)
+    m_outputStartTimestamp = m_vidFirstPacketPTS + m_replaceDelay;
     // 読み込み側に解析の終了を通知
     m_preAnalysisFin = true;
     originalTS.reset();
@@ -1759,6 +1766,9 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     AddMessage(RGY_LOG_INFO, _T("%s First key    PTS: %11lld [%+7.1f ms] [%+7.1f ms]\n"),
         (m_startPoint == TSRReplaceStartPoint::KeyframPts) ? _T("*") : _T(" "),
         m_vidFirstKeyPTS, (m_vidFirstKeyPTS - m_vidFirstPacketPTS) * 1000.0 / (double)TS_TIMEBASE, (m_vidFirstKeyPTS - m_vidFirstFramePTS) * 1000.0 / (double)TS_TIMEBASE);
+    if (m_replaceDelay > 0) {
+        AddMessage(RGY_LOG_INFO, _T("  Output start PTS: %11lld (delay %lld [%+7.1f ms])\n"), (long long)m_outputStartTimestamp, (long long)m_replaceDelay, m_replaceDelay * 1000.0 / (double)TS_TIMEBASE);
+    }
     if (getStartPointPTS() == TIMESTAMP_INVALID_VALUE) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to get first timestamp.\n"));
         return RGY_ERR_UNKNOWN;
@@ -1941,7 +1951,12 @@ RGY_ERR TSReplace::restruct() {
     const RGYTS_PAT *pat = nullptr;
     const RGYService *service = nullptr;
     int64_t m_pcr = TIMESTAMP_INVALID_VALUE;
+    int64_t curTimestamp = TIMESTAMP_INVALID_VALUE;
     std::unique_ptr<RGYTSDemuxResult> pmtResult;
+    uniqueRGYTSPacket patPacket(nullptr, RGYTSPacketDeleter(nullptr));
+
+    // 出力状態の初期化
+    auto outputState = (m_replaceDelay > 0 && m_outputStartTimestamp != TIMESTAMP_INVALID_VALUE) ? TSROutputState::Cutting : TSROutputState::Output;
 
     //本解析
     for (;;) {
@@ -1953,7 +1968,7 @@ RGY_ERR TSReplace::restruct() {
         }
 
         for (auto& tspkt : tsPackets) {
-            if (pat) {
+            if (outputState == TSROutputState::Output && pat) {
                 if (tspkt->header.PID == 0x00) { //PAT
                     if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
                         return err;
@@ -1971,6 +1986,40 @@ RGY_ERR TSReplace::restruct() {
             if (err != RGY_ERR_NONE) {
                 return err;
             }
+
+            // Cutting中に出力開始点を超えたかどうかを判定する
+            if (ret.pts != TIMESTAMP_INVALID_VALUE) {
+                curTimestamp = ret.pts;
+            } else if (const auto pcrCur = m_demuxer->pcr(); pcrCur != TIMESTAMP_INVALID_VALUE) {
+                curTimestamp = pcrCur;
+            }
+            if (outputState == TSROutputState::Cutting) {
+                if (curTimestamp == TIMESTAMP_INVALID_VALUE  // まだ開始点が決められないので、解析のみ行い出力はしない
+                    || curTimestamp < m_outputStartTimestamp) { // まだ開始点に達していないので、解析のみ行い出力はしない
+                    if (ret.type == RGYTSPacketType::PAT) {
+                        pat = m_demuxer->pat();
+                        patPacket = std::move(tspkt);
+                    } else if (ret.type == RGYTSPacketType::PMT) {
+                        pmtResult = std::make_unique<RGYTSDemuxResult>(std::move(ret));
+                    }
+                    continue;
+                }
+                // ここから出力を開始する
+                outputState = TSROutputState::Output;
+                if (pat) {
+                    if (!m_removeNonTargetService) {
+                        writePacket(patPacket.get());
+                        patPacket.reset();
+                    } else if (pat) {
+                        writeReplacedPAT(pat);
+                    }
+                    if (pmtResult) {
+                        writeReplacedPMT(*pmtResult);
+                        pmtResult.reset();
+                    }
+                }
+            }
+
             if (ret.type == RGYTSPacketType::PAT) {
                 pat = m_demuxer->pat();
                 if (!m_removeNonTargetService) {
@@ -1983,8 +2032,8 @@ RGY_ERR TSReplace::restruct() {
                     pmtResult.reset();
                     if (m_startPoint == TSRReplaceStartPoint::FirstPacket) {
                         m_vidDTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
-                        if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
-                            return err;
+                        if (auto err2 = writeReplacedVideo(); (err2 != RGY_ERR_NONE && err2 != RGY_ERR_MORE_DATA)) {
+                            return err2;
                         }
                     }
                 }
@@ -2107,6 +2156,7 @@ static void show_help() {
         _T("\n")
         _T("   --start-point <string>       set start point\n")
         _T("                                 keyframe, firstframe, firstpacket\n")
+        _T("   --replace-delay <int>        cut packets until (first timestamp + delay)\n")
 
         _T("   --(no-)add-aud               auto insert aud unit\n")
         _T("   --(no-)add-headers           auto insert headers\n")
@@ -2252,6 +2302,20 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
             prm.startpoint = (TSRReplaceStartPoint)value;
         } else {
             _ftprintf(stderr, _T("Unknown value for --%s: \"%s\""), option_name, strInput[i]);
+            return 1;
+        }
+        return 0;
+    }
+    if (IS_OPTION("replace-delay")) {
+        i++;
+        try {
+            prm.replaceDelay = std::stoll(strInput[i]);
+        } catch (...) {
+            _ftprintf(stderr, _T("Unknown value for --%s: \"%s\""), option_name, strInput[i]);
+            return 1;
+        }
+        if (prm.replaceDelay < 0) {
+            _ftprintf(stderr, _T("Negative value is not allowed for --%s: \"%s\""), option_name, strInput[i]);
             return 1;
         }
         return 0;
