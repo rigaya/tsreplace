@@ -201,6 +201,8 @@ struct TSRReplaceParams {
     tstring logfile;
     TSRReplaceStartPoint startpoint;
     int64_t replaceDelay;
+    bool endAtReplaceEOF;
+    int eofCutDelayMs;
     tstring encoderPath;
     std::vector<tstring> encoderArgs;
     bool addAud;
@@ -334,6 +336,12 @@ protected:
     // 置換遅延関連
     int64_t m_replaceDelay;          // --replace-delay で指定された遅延量(90kHz単位)
     int64_t m_outputStartTimestamp;  // 出力開始点 = m_firstTimestamp + m_replaceDelay
+
+    // 置換映像EOF終了関連
+    bool    m_endAtReplaceEOF;       // --end-at-replace-eof が有効か
+    int     m_eofCutDelayMs;         // EOF からの余裕時間(ms)
+    int64_t m_outputEndTimestamp;    // 出力終了点 (90kHz単位)
+    int64_t m_lastReplaceVidPTS;     // 最後に出力した置換映像のPTS
 };
 
 #endif //__TSREPLACE_H__

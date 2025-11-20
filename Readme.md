@@ -192,6 +192,15 @@ timestampを保持できるコンテナ入りの映像を想定しており、ra
 
 `--start-point` は置き換え映像の時刻合わせの基準であり、`--replace-delay` とは独立して動作します。
 
+### --end-at-replace-eof [&lt;int&gt;]
+置き換える映像ファイルのEOFに到達した時点から、指定した余裕時間(ms)後にTS出力を終了します。
+
+- 引数省略時  
+  100ms後に出力を終了します。
+
+- &lt;int&gt; を指定した場合  
+  指定した値をms単位の余裕時間として使用します。例: `--end-at-replace-eof 200` でEOF+200ms時点で出力終了。
+
 ### --replace-format &lt;string&gt;
 置き換える映像の入っているファイルのフォーマットを指定します。
 

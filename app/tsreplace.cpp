@@ -141,6 +141,8 @@ TSRReplaceParams::TSRReplaceParams() :
     logfile(),
     startpoint(TSRReplaceStartPoint::KeyframPts),
     replaceDelay(0),
+    endAtReplaceEOF(false),
+    eofCutDelayMs(100),
     addAud(true),
     addHeaders(true),
     removeTypeD(false),
@@ -996,7 +998,11 @@ TSReplace::TSReplace() :
     m_encThreadErr(),
     m_encQueueOut(),
     m_replaceDelay(0),
-    m_outputStartTimestamp(TIMESTAMP_INVALID_VALUE) {
+    m_outputStartTimestamp(TIMESTAMP_INVALID_VALUE),
+    m_endAtReplaceEOF(false),
+    m_eofCutDelayMs(100),
+    m_outputEndTimestamp(TIMESTAMP_INVALID_VALUE),
+    m_lastReplaceVidPTS(TIMESTAMP_INVALID_VALUE) {
 
 }
 TSReplace::~TSReplace() {
@@ -1074,6 +1080,12 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_removeNonTargetService = prms.removeNonTargetService;
     m_copyFileTs = prms.copyFileTs;
 
+    // 置換映像EOF終了関連
+    m_endAtReplaceEOF    = prms.endAtReplaceEOF;
+    m_eofCutDelayMs      = prms.eofCutDelayMs;
+    m_outputEndTimestamp = TIMESTAMP_INVALID_VALUE;
+    m_lastReplaceVidPTS  = TIMESTAMP_INVALID_VALUE;
+
     AddMessage(RGY_LOG_INFO, _T("Output  file: \"%s\".\n"), prms.output.c_str());
     AddMessage(RGY_LOG_INFO, _T("Input   file: \"%s\".\n"), prms.input.c_str());
     if (prms.replacefile.length() > 0) {
@@ -1088,6 +1100,8 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     }
     AddMessage(RGY_LOG_INFO, _T("Start point : %s.\n"), get_cx_desc(list_startpoint, (int)prms.startpoint));
     AddMessage(RGY_LOG_INFO, _T("Replace delay : %lld (90kHz ticks).\n"), (long long)m_replaceDelay);
+    AddMessage(RGY_LOG_INFO, _T("End at Replace EOF : %s (margin %d ms).\n"),
+        m_endAtReplaceEOF ? _T("on") : _T("off"), m_eofCutDelayMs);
     AddMessage(RGY_LOG_INFO, _T("Add AUD     : %s.\n"), m_addAud ? _T("on") : _T("off"));
     AddMessage(RGY_LOG_INFO, _T("Add Headers : %s.\n"), m_addHeaders ? _T("on") : _T("off"));
     AddMessage(RGY_LOG_INFO, _T("Remove TypeD: %s.\n"), m_removeTypeD ? _T("on") : _T("off"));
@@ -1546,6 +1560,9 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const auto pts = av_rescale_q(avpkt->pts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
     const auto dts = av_rescale_q(avpkt->dts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
 
+    // 最後に出力した置換映像のPTSを記録 (EOF時の終了しきい値計算用)
+    m_lastReplaceVidPTS = pts;
+
     int add_aud_len = (addAud) ? ((replaceToHEVC) ? 7 : 6) : 0;
     const  uint8_t *header = nullptr;
     int add_header_len = 0;
@@ -1646,6 +1663,15 @@ RGY_ERR TSReplace::writeReplacedVideo() {
     for (;;) {
         auto [err, pts, dts] = m_videoReplace->getFrontPktPtsDts();
         if (err != RGY_ERR_NONE) {
+            // 置換映像のEOF到達時に終了しきい値を設定
+            if (err == RGY_ERR_MORE_DATA
+                && m_endAtReplaceEOF
+                && m_outputEndTimestamp == TIMESTAMP_INVALID_VALUE
+                && m_lastReplaceVidPTS != TIMESTAMP_INVALID_VALUE) {
+                m_outputEndTimestamp = m_lastReplaceVidPTS + (int64_t)m_eofCutDelayMs * (TS_TIMEBASE / 1000); // 90kHz単位;
+                AddMessage(RGY_LOG_INFO, _T("Replace EOF PTS: %11lld, set output end timestamp: %11lld (+%d ms).\n"),
+                    (long long)m_lastReplaceVidPTS, (long long)m_outputEndTimestamp, m_eofCutDelayMs);
+            }
             return err;
         }
         // dtsベースで差分を計算するが、起点は最初のPTSとする
@@ -1656,6 +1682,15 @@ RGY_ERR TSReplace::writeReplacedVideo() {
         }
         auto [err2, pkt] = m_videoReplace->getFrontPktAndPop();
         if (err2 != RGY_ERR_NONE) {
+            // getFrontPktAndPop()側でもEOF到達を検出しうるので、同様に終了しきい値を設定
+            if (err2 == RGY_ERR_MORE_DATA
+                && m_endAtReplaceEOF
+                && m_outputEndTimestamp == TIMESTAMP_INVALID_VALUE
+                && m_lastReplaceVidPTS != TIMESTAMP_INVALID_VALUE) {
+                m_outputEndTimestamp = m_lastReplaceVidPTS + (int64_t)m_eofCutDelayMs * (TS_TIMEBASE / 1000); // 90kHz単位
+                AddMessage(RGY_LOG_INFO, _T("Replace EOF PTS: %11lld, set output end timestamp: %11lld (+%d ms).\n"),
+                    (long long)m_lastReplaceVidPTS, (long long)m_outputEndTimestamp, m_eofCutDelayMs);
+            }
             return err2;
         }
         err = writeReplacedVideo(pkt.get());
@@ -1993,6 +2028,18 @@ RGY_ERR TSReplace::restruct() {
             } else if (const auto pcrCur = m_demuxer->pcr(); pcrCur != TIMESTAMP_INVALID_VALUE) {
                 curTimestamp = pcrCur;
             }
+
+            // 映像EOF+マージンを超えたら出力を打ち切る
+            if (outputState == TSROutputState::Output
+                && m_endAtReplaceEOF
+                && m_outputEndTimestamp != TIMESTAMP_INVALID_VALUE
+                && curTimestamp != TIMESTAMP_INVALID_VALUE
+                && curTimestamp > m_outputEndTimestamp) {
+                AddMessage(RGY_LOG_INFO, _T("Stop output at timestamp %11lld (>= EOF+margin %11lld).\n"),
+                    (long long)curTimestamp, (long long)m_outputEndTimestamp);
+                return RGY_ERR_NONE;
+            }
+
             if (outputState == TSROutputState::Cutting) {
                 if (curTimestamp == TIMESTAMP_INVALID_VALUE  // まだ開始点が決められないので、解析のみ行い出力はしない
                     || curTimestamp < m_outputStartTimestamp) { // まだ開始点に達していないので、解析のみ行い出力はしない
@@ -2157,6 +2204,7 @@ static void show_help() {
         _T("   --start-point <string>       set start point\n")
         _T("                                 keyframe, firstframe, firstpacket\n")
         _T("   --replace-delay <int>        cut packets until (first timestamp + delay)\n")
+        _T("   --end-at-replace-eof [<int>] stop output around replace EOF (+margin ms)\n")
 
         _T("   --(no-)add-aud               auto insert aud unit\n")
         _T("   --(no-)add-headers           auto insert headers\n")
@@ -2317,6 +2365,24 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
         if (prm.replaceDelay < 0) {
             _ftprintf(stderr, _T("Negative value is not allowed for --%s: \"%s\""), option_name, strInput[i]);
             return 1;
+        }
+        return 0;
+    }
+    if (IS_OPTION("end-at-replace-eof")) {
+        prm.endAtReplaceEOF = true;
+        // 引数が存在し、次がオプションでなければms値として解釈する
+        if (i + 1 < argc && strInput[i + 1] != nullptr && strInput[i + 1][0] != _T('-')) {
+            i++;
+            try {
+                prm.eofCutDelayMs = std::stoi(strInput[i]);
+            } catch (...) {
+                _ftprintf(stderr, _T("Unknown value for --%s: \"%s\""), option_name, strInput[i]);
+                return 1;
+            }
+            if (prm.eofCutDelayMs < 0) {
+                _ftprintf(stderr, _T("Negative value is not allowed for --%s: \"%s\""), option_name, strInput[i]);
+                return 1;
+            }
         }
         return 0;
     }
