@@ -44,6 +44,24 @@ static const TCHAR *serviceNum[] = {_T(""), _T("1st"), _T("2nd"), _T("3rd"), _T(
 static const int64_t WRAP_AROUND_VALUE = (1LL << 33);
 static const int64_t WRAP_AROUND_CHECK_VALUE = ((1LL << 32) - 1);
 
+// TS の 33bit PTS/PCR 同士の差分 (a - b) を、wrap を考慮して返す
+static int64_t diffTimestampTsAMinusB(int64_t a, int64_t b) {
+    if (a == TIMESTAMP_INVALID_VALUE || b == TIMESTAMP_INVALID_VALUE) {
+        return 0;
+    }
+
+    int64_t diff = a - b;
+
+    // 差分が 2^32 を超えるようなら、wrap したとみなして補正する
+    if (diff > WRAP_AROUND_CHECK_VALUE) {
+        diff -= WRAP_AROUND_VALUE;
+    } else if (diff < -WRAP_AROUND_CHECK_VALUE) {
+        diff += WRAP_AROUND_VALUE;
+    }
+
+    return diff;
+}
+
 static_assert(TIMESTAMP_INVALID_VALUE == AV_NOPTS_VALUE);
 
 static int funcReadPacket(void *opaque, uint8_t *buf, int buf_size) {
@@ -1669,8 +1687,8 @@ RGY_ERR TSReplace::writeReplacedVideo() {
                 && m_outputEndTimestamp == TIMESTAMP_INVALID_VALUE
                 && m_lastReplaceVidPTS != TIMESTAMP_INVALID_VALUE) {
                 m_outputEndTimestamp = m_lastReplaceVidPTS + (int64_t)m_eofCutDelayMs * (TS_TIMEBASE / 1000); // 90kHz単位;
-                AddMessage(RGY_LOG_INFO, _T("Replace EOF PTS: %11lld, set output end timestamp: %11lld (+%d ms).\n"),
-                    (long long)m_lastReplaceVidPTS, (long long)m_outputEndTimestamp, m_eofCutDelayMs);
+                AddMessage(RGY_LOG_INFO, _T("Replace EOF PTS: %11lld\n"), (long long)m_lastReplaceVidPTS);
+                AddMessage(RGY_LOG_DEBUG, _T("Set output end timestamp: %11lld (+%d ms).\n"), (long long)m_outputEndTimestamp, m_eofCutDelayMs);
             }
             return err;
         }
@@ -1688,8 +1706,8 @@ RGY_ERR TSReplace::writeReplacedVideo() {
                 && m_outputEndTimestamp == TIMESTAMP_INVALID_VALUE
                 && m_lastReplaceVidPTS != TIMESTAMP_INVALID_VALUE) {
                 m_outputEndTimestamp = m_lastReplaceVidPTS + (int64_t)m_eofCutDelayMs * (TS_TIMEBASE / 1000); // 90kHz単位
-                AddMessage(RGY_LOG_INFO, _T("Replace EOF PTS: %11lld, set output end timestamp: %11lld (+%d ms).\n"),
-                    (long long)m_lastReplaceVidPTS, (long long)m_outputEndTimestamp, m_eofCutDelayMs);
+                AddMessage(RGY_LOG_INFO, _T("Replace EOF PTS: %11lld\n"), (long long)m_lastReplaceVidPTS);
+                AddMessage(RGY_LOG_DEBUG, _T("Set output end timestamp: %11lld (+%d ms).\n"), (long long)m_outputEndTimestamp, m_eofCutDelayMs);
             }
             return err2;
         }
@@ -1992,6 +2010,7 @@ RGY_ERR TSReplace::restruct() {
 
     // 出力状態の初期化
     auto outputState = (m_replaceDelay > 0 && m_outputStartTimestamp != TIMESTAMP_INVALID_VALUE) ? TSROutputState::Cutting : TSROutputState::Output;
+    std::vector<int> replaceDelayOutputAudioPid; // m_replaceDelay > 0の場合に、音声出力を開始したpidのリスト
 
     //本解析
     for (;;) {
@@ -2035,7 +2054,7 @@ RGY_ERR TSReplace::restruct() {
                 && m_outputEndTimestamp != TIMESTAMP_INVALID_VALUE
                 && curTimestamp != TIMESTAMP_INVALID_VALUE
                 && curTimestamp > m_outputEndTimestamp) {
-                AddMessage(RGY_LOG_INFO, _T("Stop output at timestamp %11lld (>= EOF+margin %11lld).\n"),
+                AddMessage(RGY_LOG_DEBUG, _T("Stop output at timestamp %11lld (>= EOF+margin %11lld).\n"),
                     (long long)curTimestamp, (long long)m_outputEndTimestamp);
                 return RGY_ERR_NONE;
             }
@@ -2144,7 +2163,22 @@ RGY_ERR TSReplace::restruct() {
                         if (m_removeTypeD && ret.stream.type == RGYTSStreamType::TYPE_D) {
                             // データ放送の削除 -> 出力しない
                         } else {
-                            writePacket(tspkt.get());
+                            bool outputPkt = true;
+                            if (m_replaceDelay > 0 && ret.stream.type == RGYTSStreamType::ADTS_TRANSPORT) {
+                                if (std::find(replaceDelayOutputAudioPid.begin(), replaceDelayOutputAudioPid.end(), ret.stream.pid) == replaceDelayOutputAudioPid.end()) {
+                                    // まだ出力を開始していない音声
+                                    const auto audioSampleThreshold = 1024 * TS_TIMEBASE / 48000;
+                                    if (ret.pts != TIMESTAMP_INVALID_VALUE
+                                        && diffTimestampTsAMinusB(ret.pts, getStartPointPTS() - audioSampleThreshold) >= 0) {
+                                        replaceDelayOutputAudioPid.push_back(ret.stream.pid); // 出力を開始
+                                    } else {
+                                        outputPkt = false;
+                                    }
+                                }
+                            }
+                            if (outputPkt) {
+                                writePacket(tspkt.get());
+                            }
                         }
                         break;
                     default:
