@@ -29,15 +29,15 @@ jobs:
           - dockerimg: ubuntu2004
             pkgtype: deb
             platform: arm64
-            os: ubuntu-24.04-arm64
+            os: ubuntu-24.04-arm
           - dockerimg: ubuntu2204
             pkgtype: deb
             platform: arm64
-            os: ubuntu-24.04-arm64
+            os: ubuntu-24.04-arm
           - dockerimg: ubuntu2404
             pkgtype: deb
             platform: arm64
-            os: ubuntu-24.04-arm64
+            os: ubuntu-24.04-arm
 
     env:
       DOCKER_FILE:  docker/docker_${{ matrix.dockerimg }}
