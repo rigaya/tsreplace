@@ -1,4 +1,4 @@
-﻿// -----------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 // tsreplace by rigaya
 // -----------------------------------------------------------------------------------------
 // The MIT License
@@ -2048,12 +2048,12 @@ RGY_ERR TSReplace::restruct() {
                 curTimestamp = pcrCur;
             }
 
-            // 映像EOF+マージンを超えたら出力を打ち切る
+            // 映像EOF+マージンを超えたら出力を打ち切る (PTS wrap を考慮)
             if (outputState == TSROutputState::Output
                 && m_endAtReplaceEOF
                 && m_outputEndTimestamp != TIMESTAMP_INVALID_VALUE
                 && curTimestamp != TIMESTAMP_INVALID_VALUE
-                && curTimestamp > m_outputEndTimestamp) {
+                && diffTimestampTsAMinusB(curTimestamp, m_outputEndTimestamp) > 0) {
                 AddMessage(RGY_LOG_DEBUG, _T("Stop output at timestamp %11lld (>= EOF+margin %11lld).\n"),
                     (long long)curTimestamp, (long long)m_outputEndTimestamp);
                 return RGY_ERR_NONE;
