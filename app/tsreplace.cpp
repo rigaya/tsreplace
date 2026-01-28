@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------------------
+﻿// -----------------------------------------------------------------------------------------
 // tsreplace by rigaya
 // -----------------------------------------------------------------------------------------
 // The MIT License
@@ -2010,7 +2010,7 @@ RGY_ERR TSReplace::restruct() {
 
     // 出力状態の初期化
     auto outputState = (m_replaceDelay > 0 && m_outputStartTimestamp != TIMESTAMP_INVALID_VALUE) ? TSROutputState::Cutting : TSROutputState::Output;
-    std::vector<int> replaceDelayOutputAudioPid; // m_replaceDelay > 0の場合に、音声出力を開始したpidのリスト
+    bool replaceDelayOutputAudioStarted = false; // m_replaceDelay > 0の場合に、音声出力を開始したかどうかのフラグ
 
     //本解析
     for (;;) {
@@ -2165,12 +2165,12 @@ RGY_ERR TSReplace::restruct() {
                         } else {
                             bool outputPkt = true;
                             if (m_replaceDelay > 0 && ret.stream.type == RGYTSStreamType::ADTS_TRANSPORT) {
-                                if (std::find(replaceDelayOutputAudioPid.begin(), replaceDelayOutputAudioPid.end(), ret.stream.pid) == replaceDelayOutputAudioPid.end()) {
+                                if (!replaceDelayOutputAudioStarted) {
                                     // まだ出力を開始していない音声
                                     const auto audioSampleThreshold = 1024 * TS_TIMEBASE / 48000;
                                     if (ret.pts != TIMESTAMP_INVALID_VALUE
                                         && diffTimestampTsAMinusB(ret.pts, getStartPointPTS() - audioSampleThreshold) >= 0) {
-                                        replaceDelayOutputAudioPid.push_back(ret.stream.pid); // 出力を開始
+                                        replaceDelayOutputAudioStarted = true; // 出力を開始
                                     } else {
                                         outputPkt = false;
                                     }
