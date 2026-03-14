@@ -1,0 +1,78 @@
+name: Build Base Docker Images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-base:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerimg: ubuntu2004
+            platform: amd64
+            ffmpeg_arch: x64
+            os: ubuntu-24.04
+          - dockerimg: ubuntu2204
+            platform: amd64
+            ffmpeg_arch: x64
+            os: ubuntu-24.04
+          - dockerimg: ubuntu2404
+            platform: amd64
+            ffmpeg_arch: x64
+            os: ubuntu-24.04
+          - dockerimg: ubuntu2004
+            platform: arm64
+            ffmpeg_arch: arm64
+            os: ubuntu-24.04-arm
+          - dockerimg: ubuntu2204
+            platform: arm64
+            ffmpeg_arch: arm64
+            os: ubuntu-24.04-arm
+          - dockerimg: ubuntu2404
+            platform: arm64
+            ffmpeg_arch: arm64
+            os: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.os }}
+    env:
+      DOCKER_FILE: docker/docker_${{ matrix.dockerimg }}
+      IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/tsreplace-build
+      FFMPEG_DLL_REPO: https://github.com/rigaya/build_scripts.git
+      FFMPEG_DLL_REF: master
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push base image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ${{ env.DOCKER_FILE }}
+          platforms: linux/${{ matrix.platform }}
+          push: true
+          tags: ${{ env.IMAGE_REPO }}:${{ matrix.dockerimg }}-${{ matrix.platform }}
+          build-args: |
+            FFMPEG_DLL_REPO=${{ env.FFMPEG_DLL_REPO }}
+            FFMPEG_DLL_REF=${{ env.FFMPEG_DLL_REF }}
+            FFMPEG_PREFIX=/opt/build_scripts/ffmpeg_dll/tsreplace/${{ matrix.ffmpeg_arch }}/build
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,27 +1,55 @@
 FROM ubuntu:24.04
 
-ARG DEBIAN_FRONTEND=noninteractive \
-    LOCAL_USER_ID=1000 \
-    LOCAL_GROUP_ID=1000
+ARG DEBIAN_FRONTEND=noninteractive
+ARG FFMPEG_DLL_REPO=https://github.com/rigaya/build_scripts.git
+ARG FFMPEG_DLL_REF=master
+ARG BUILD_SCRIPTS_DIR=/opt/build_scripts
+ARG FFMPEG_PREFIX=/opt/build_scripts/ffmpeg_dll/tsreplace/x64/build
 
 RUN apt-get update \
-    && apt install -y \
+    && apt-get install -y --no-install-recommends \
       wget \
+      curl \
       git \
+      ca-certificates \
+      autoconf \
+      automake \
+      libtool \
+      autopoint gettext \
+      make \
       pkg-config \
+      meson \
+      ninja-build \
+      cmake \
+      nasm \
+      yasm \
+      patch \
+      xz-utils \
+      p7zip-full \
+      unzip \
+      bzip2 \
       python3 \
+      python3-pip \
+      gperf \
+      autogen \
+      libx11-dev \
       build-essential \
-      libavcodec-dev \
-      libavutil-dev \
-      libavformat-dev \
-      libswresample-dev \
-      libavfilter-dev \
+      openssl \
+      libssl-dev \
+    && python3 -m pip install --break-system-packages --upgrade meson ninja \
+    && meson --version \
+    && which meson \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -u $LOCAL_USER_ID -m --user-group --shell /bin/bash rigaya
-RUN groupmod -g $LOCAL_GROUP_ID rigaya
-WORKDIR /home/rigaya
-COPY . .
-RUN chown -R rigaya:rigaya .
-USER rigaya
+RUN git clone --depth 1 --branch ${FFMPEG_DLL_REF} ${FFMPEG_DLL_REPO} ${BUILD_SCRIPTS_DIR} \
+    && cd ${BUILD_SCRIPTS_DIR}/ffmpeg_dll \
+    && sed -i 's/\r$//' ./build_ffmpeg_dll.sh \
+    && export NUMBER_OF_PROCESSORS="$(nproc)" \
+    && bash ./build_ffmpeg_dll.sh --skip-src-archive --target tsreplace \
+    && test -f "${FFMPEG_PREFIX}/lib/pkgconfig/libavutil.pc" \
+    && find "${BUILD_SCRIPTS_DIR}" -mindepth 1 -maxdepth 1 ! -path "${BUILD_SCRIPTS_DIR}/ffmpeg_dll" -exec rm -rf {} + \
+    && find "${BUILD_SCRIPTS_DIR}/ffmpeg_dll" -mindepth 1 -maxdepth 1 ! -path "${BUILD_SCRIPTS_DIR}/ffmpeg_dll/tsreplace" -exec rm -rf {} +
+
+ENV FFMPEG_PREFIX=${FFMPEG_PREFIX}
+WORKDIR /work

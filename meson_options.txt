@@ -1,0 +1,2 @@
+option('libav_static', type: 'boolean', value: false, description: 'Use static pkg-config dependencies for FFmpeg')
+option('static_runtime', type: 'boolean', value: false, description: 'Link libstdc++/libgcc statically')
