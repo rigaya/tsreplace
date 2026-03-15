@@ -17,23 +17,7 @@ jobs:
             platform: amd64
             ffmpeg_arch: x64
             os: ubuntu-24.04
-          - dockerimg: ubuntu2204
-            platform: amd64
-            ffmpeg_arch: x64
-            os: ubuntu-24.04
-          - dockerimg: ubuntu2404
-            platform: amd64
-            ffmpeg_arch: x64
-            os: ubuntu-24.04
           - dockerimg: ubuntu2004
-            platform: arm64
-            ffmpeg_arch: arm64
-            os: ubuntu-24.04-arm
-          - dockerimg: ubuntu2204
-            platform: arm64
-            ffmpeg_arch: arm64
-            os: ubuntu-24.04-arm
-          - dockerimg: ubuntu2404
             platform: arm64
             ffmpeg_arch: arm64
             os: ubuntu-24.04-arm
