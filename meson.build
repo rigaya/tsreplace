@@ -1,5 +1,5 @@
 project('tsreplace', ['c', 'cpp'],
-  version: '0.18',
+  version: run_command('git', 'describe', '--tags', '--abbrev=0', check: true).stdout().strip(),
   license: 'MIT',
   meson_version: '>=0.61.0',
   default_options: [
