@@ -982,8 +982,15 @@ TSReplace::TSReplace() :
     m_tsPktSplitter(),
     m_fpTSIn(),
     m_fpTSOut(),
+    m_fpTSOutStdioBuf(),
     m_inputAbort(false),
     m_threadInputTS(),
+    m_threadOutputTS(),
+    m_queueOutput(),
+    m_bufferOutput(),
+    m_outputBlockSize(1 * 1024 * 1024),
+    m_outputIsPipe(false),
+    m_outputError(RGY_ERR_NONE),
     m_threadSendEncoder(),
     m_queueInputReplace(),
     m_queueInputEncoder(),
@@ -1081,6 +1088,27 @@ RGY_ERR TSReplace::close() {
         AddMessage(RGY_LOG_DEBUG, _T("Close Encoder.\n"));
         m_encoder.reset();
     }
+
+    // 出力スレッドの終了処理: 残りのバッファをフラッシュしてEOFを通知し、書き込み完了を待ってからファイルを閉じる
+    if (m_threadOutputTS) {
+        AddMessage(RGY_LOG_DEBUG, _T("Flush output buffer.\n"));
+        if (auto err = flushOutputBuffer(); err != RGY_ERR_NONE && sts == RGY_ERR_NONE) {
+            sts = err;
+        }
+        if (m_queueOutput) {
+            m_queueOutput->setEOF();
+        }
+        AddMessage(RGY_LOG_DEBUG, _T("Finish thread to write output.\n"));
+        if (m_threadOutputTS->joinable()) {
+            m_threadOutputTS->join();
+        }
+        m_threadOutputTS.reset();
+        if (auto err = (RGY_ERR)m_outputError.load(); err != RGY_ERR_NONE && sts == RGY_ERR_NONE) {
+            sts = err;
+        }
+    }
+    m_queueOutput.reset();
+
     m_fpTSIn.reset();
     m_fpTSOut.reset();
     if (m_copyFileTs
@@ -1189,6 +1217,12 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         FILE *fptmp = nullptr;
         if (_tfopen_s(&fptmp, m_fileOut.c_str(), _T("wb")) == 0 && fptmp != nullptr) {
             m_fpTSOut = std::unique_ptr<FILE, fp_deleter>(fptmp, fp_deleter());
+            // ネットワークドライブ等でも大きな単位でまとめて書き込めるよう、stdioバッファを拡大する
+            m_fpTSOutStdioBuf.resize(m_outputBlockSize);
+            if (setvbuf(m_fpTSOut.get(), m_fpTSOutStdioBuf.data(), _IOFBF, m_fpTSOutStdioBuf.size()) != 0) {
+                AddMessage(RGY_LOG_WARN, _T("Failed to set output file buffer.\n"));
+                m_fpTSOutStdioBuf.clear();
+            }
         } else {
             AddMessage(RGY_LOG_ERROR, _T("Failed to open output file \"%s\".\n"), m_fileOut.c_str());
             return RGY_ERR_FILE_OPEN;
@@ -1196,6 +1230,9 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     } else {
         AddMessage(RGY_LOG_DEBUG, _T("Open output file stdout.\n"));
         m_fpTSOut = std::unique_ptr<FILE, fp_deleter>(stdout, fp_deleter());
+        // パイプ出力はスループットよりレイテンシを優先し、パケット単位で即時に書き込む
+        // (大きなstdioバッファは設定せず、既定のバッファリングのまま使用する)
+        m_outputIsPipe = true;
 #if defined(_WIN32) || defined(_WIN64)
         if (_setmode(_fileno(stdout), _O_BINARY) < 0) {
             AddMessage(RGY_LOG_ERROR, _T("failed to switch stdout to binary mode.\n"));
@@ -1353,6 +1390,53 @@ RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
     return RGY_ERR_MORE_DATA;
 }
 
+// 出力用の非同期書き込みスレッドを初期化する
+// メイン処理スレッドから切り離して書き込むことで、ネットワークドライブの書き込みレイテンシと処理を重ねる
+RGY_ERR TSReplace::initOutputThread() {
+    if (m_threadOutputTS) {
+        return RGY_ERR_NONE;
+    }
+    m_outputError = RGY_ERR_NONE;
+    m_queueOutput = std::make_unique<RGYQueueBuffer>();
+    m_queueOutput->init(m_outputBlockSize * 2);
+    m_queueOutput->setMaxCapacity((int64_t)m_outputBlockSize * 4);
+    m_bufferOutput.reserve(m_outputBlockSize + 188 * 8);
+    AddMessage(RGY_LOG_DEBUG, _T("Create thread and queue for output.\n"));
+    m_threadOutputTS = std::make_unique<std::thread>([&]() {
+        std::vector<uint8_t> writeBuffer(m_outputBlockSize * 2);
+        int64_t bytes_read = 0;
+        while ((bytes_read = m_queueOutput->popDataBlock(writeBuffer.data(), (int64_t)writeBuffer.size())) >= 0) {
+            if (bytes_read == 0) {
+                continue;
+            }
+            if (_fwrite_nolock(writeBuffer.data(), 1, (size_t)bytes_read, m_fpTSOut.get()) != (size_t)bytes_read) {
+                m_outputError = RGY_ERR_OUT_OF_RESOURCES;
+                break;
+            }
+        }
+        AddMessage(RGY_LOG_DEBUG, _T("Finished output writer thread.\n"));
+    });
+    return RGY_ERR_NONE;
+}
+
+// 蓄積した出力バッファを書き込みキューへ送る
+RGY_ERR TSReplace::flushOutputBuffer() {
+    if (m_bufferOutput.empty()) {
+        return (RGY_ERR)m_outputError.load();
+    }
+    if (auto err = (RGY_ERR)m_outputError.load(); err != RGY_ERR_NONE) {
+        return err;
+    }
+    // キューが一杯の場合はpushDataがタイムアウトするので、書き込みエラーを確認しながらリトライする
+    while (!m_queueOutput->pushData(m_bufferOutput.data(), (int64_t)m_bufferOutput.size(), 1000)) {
+        if (auto err = (RGY_ERR)m_outputError.load(); err != RGY_ERR_NONE) {
+            return err;
+        }
+    }
+    m_bufferOutput.clear();
+    return (RGY_ERR)m_outputError.load();
+}
+
 RGY_ERR TSReplace::writePacket(RGYTSPacket *pkt) {
     if (cutMode()) {
         // CC は出力直前だけ書き換え、呼び出し元で packet を再利用しないため、buffer を直接更新する。
@@ -1361,8 +1445,26 @@ RGY_ERR TSReplace::writePacket(RGYTSPacket *pkt) {
             m_ccRewriter.process(data + offset);
         }
     }
-    if (_fwrite_nolock(pkt->data(), 1, pkt->datasize(), m_fpTSOut.get()) != pkt->datasize()) {
-        return RGY_ERR_OUT_OF_RESOURCES;
+    // 標準出力ではキューもスレッドも作らず、従来どおり即時に書き込む。
+    if (m_outputIsPipe) {
+        if (_fwrite_nolock(pkt->data(), 1, pkt->datasize(), m_fpTSOut.get()) != pkt->datasize()) {
+            return RGY_ERR_OUT_OF_RESOURCES;
+        }
+        return RGY_ERR_NONE;
+    }
+    if (auto err = (RGY_ERR)m_outputError.load(); err != RGY_ERR_NONE) {
+        return err;
+    }
+    // 出力スレッドは最初の書き込み時に起動する
+    if (!m_threadOutputTS) {
+        if (auto err = initOutputThread(); err != RGY_ERR_NONE) {
+            return err;
+        }
+    }
+    m_bufferOutput.insert(m_bufferOutput.end(), pkt->data(), pkt->data() + pkt->datasize());
+    // 188バイト単位の細切れ書き込みを避けるため、一定サイズまでまとめてからキューへ送る。
+    if (m_bufferOutput.size() >= m_outputBlockSize) {
+        return flushOutputBuffer();
     }
     return RGY_ERR_NONE;
 }

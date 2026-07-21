@@ -32,6 +32,7 @@
 #include <deque>
 #include <thread>
 #include <mutex>
+#include <atomic>
 #include <unordered_map>
 #include "rgy_tsdemux.h"
 #include "rgy_tscut.h"
@@ -256,6 +257,8 @@ protected:
     EncoderType getEncoderType();
     RGY_ERR initEncoder();
     RGY_ERR readTS(std::vector<uniqueRGYTSPacket>& packetBuffer);
+    RGY_ERR initOutputThread();     // ファイル出力用の非同期書き込みスレッドを初期化する
+    RGY_ERR flushOutputBuffer();    // 蓄積した出力バッファを書き込みキューへ送る
     RGY_ERR writePacket(RGYTSPacket *pkt);
     RGY_ERR finalizeHeldADTSPES(uint16_t pid, TSRPidCutState& state, bool truncateTail);
     RGY_ERR flushHeldADTSPES();
@@ -315,8 +318,15 @@ protected:
     std::unique_ptr<RGYTSPacketSplitter> m_tsPktSplitter; // ts読み込み時ののpacket分割用
     std::unique_ptr<FILE, fp_deleter> m_fpTSIn;  // 入力tsファイル
     std::unique_ptr<FILE, fp_deleter> m_fpTSOut; // 出力tsファイル
+    std::vector<char> m_fpTSOutStdioBuf; // 出力ファイルのstdioバッファ (setvbuf用)
     bool m_inputAbort; // 入力スレッドの終了要求
     std::unique_ptr<std::thread> m_threadInputTS; // オリジナルts読み込みスレッド
+    std::unique_ptr<std::thread> m_threadOutputTS; // ファイル出力用の書き込みスレッド
+    std::unique_ptr<RGYQueueBuffer> m_queueOutput; // ファイル出力用の書き込みキュー
+    std::vector<uint8_t> m_bufferOutput; // 出力TSをブロック単位にまとめるバッファ
+    size_t m_outputBlockSize; // ファイル出力をまとめる単位
+    bool m_outputIsPipe; // 出力先が標準出力かどうか
+    std::atomic<RGY_ERR> m_outputError; // 出力スレッドで発生したエラー
     std::unique_ptr<std::thread> m_threadSendEncoder; // tsからエンコーダへの送信スレッド
     std::unique_ptr<RGYQueueBuffer> m_queueInputReplace; // tsreplaceの読み込み用
     std::unique_ptr<RGYQueueBuffer> m_queueInputEncoder; // エンコーダの読み込み用
