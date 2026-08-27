@@ -2295,7 +2295,11 @@ RGY_ERR TSReplace::restruct() {
                 } else if (m_removeNonTargetService && ret.programNumber > 0) {
                     // 対象サービスでない、他のサービスに属するパケットの場合(ret.programNumber > 0)、そのパケットは削除する -> 出力しない
                 } else {
-                    writePacket(tspkt.get());
+                    // timestamp を持たない SI packet は、直近の source clock でカット判定する。
+                    // PCR が未確定なら安全側として出力する。
+                    if (!cutMode() || curTimestamp == TIMESTAMP_INVALID_VALUE || !isCutTimestamp(curTimestamp)) {
+                        writePacket(tspkt.get());
+                    }
                 }
             }
         }
