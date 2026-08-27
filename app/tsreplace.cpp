@@ -1012,6 +1012,7 @@ TSReplace::TSReplace() :
     m_selectService(0),
     m_copyFileTs(false),
     m_cut(),
+    m_ccRewriter(),
     m_parseNalH264(get_parse_nal_unit_h264_func()),
     m_parseNalHevc(get_parse_nal_unit_hevc_func()),
     m_encoder(),
@@ -1108,6 +1109,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         }
         AddMessage(RGY_LOG_INFO, _T("Loaded %d cut ranges, total cut: %.3f sec\n"),
             (int)m_cut.rangeCount(), m_cut.totalRemoved() / (double)TS_TIMEBASE);
+        m_ccRewriter.reset();
         if (!m_removeNonTargetService) {
             AddMessage(RGY_LOG_ERROR, _T("--preserve-other-services は --cut-list と併用できない\n"));
             return RGY_ERR_INVALID_PARAM;
@@ -1340,7 +1342,14 @@ RGY_ERR TSReplace::readTS(std::vector<uniqueRGYTSPacket>& packetBuffer) {
     return RGY_ERR_MORE_DATA;
 }
 
-RGY_ERR TSReplace::writePacket(const RGYTSPacket *pkt) {
+RGY_ERR TSReplace::writePacket(RGYTSPacket *pkt) {
+    if (cutMode()) {
+        // CC は出力直前だけ書き換え、呼び出し元で packet を再利用しないため、buffer を直接更新する。
+        auto *data = pkt->packet.data();
+        for (size_t offset = 0; offset + 188 <= pkt->datasize(); offset += 188) {
+            m_ccRewriter.process(data + offset);
+        }
+    }
     if (_fwrite_nolock(pkt->data(), 1, pkt->datasize(), m_fpTSOut.get()) != pkt->datasize()) {
         return RGY_ERR_OUT_OF_RESOURCES;
     }

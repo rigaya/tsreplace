@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 #include "rgy_err.h"
@@ -43,4 +44,13 @@ private:
     int64_t m_originPTS;
     int64_t m_totalRemoved;
     mutable size_t m_cachedRange;
+};
+
+class TSRContinuityRewriter {
+public:
+    void process(uint8_t *pkt188);
+    void reset();
+
+private:
+    std::unordered_map<uint16_t, uint8_t> m_cc;
 };

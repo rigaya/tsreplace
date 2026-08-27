@@ -278,3 +278,34 @@ int64_t TSRCutTimeline::removedBefore(int64_t t) const {
     }
     return m_removedBeforeRange[index] + std::min(t, range.end) - range.start;
 }
+
+void TSRContinuityRewriter::process(uint8_t *pkt188) {
+    if (pkt188 == nullptr) {
+        return;
+    }
+
+    const auto pid = (uint16_t)(((pkt188[1] & 0x1f) << 8) | pkt188[2]);
+    if (pid == 0x1fff) {
+        return;
+    }
+
+    const auto adaptationFieldControl = (pkt188[3] >> 4) & 0x03;
+    if (adaptationFieldControl == 0x00) {
+        return;
+    }
+
+    const auto originalCC = pkt188[3] & 0x0f;
+    const auto [entry, inserted] = m_cc.emplace(pid, originalCC);
+    if (inserted) {
+        return;
+    }
+
+    if (adaptationFieldControl & 0x01) {
+        entry->second = (entry->second + 1) & 0x0f;
+    }
+    pkt188[3] = (pkt188[3] & 0xf0) | entry->second;
+}
+
+void TSRContinuityRewriter::reset() {
+    m_cc.clear();
+}

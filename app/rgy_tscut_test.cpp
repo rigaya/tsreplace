@@ -4,6 +4,7 @@
 
 #include "rgy_tscut.h"
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -136,6 +137,81 @@ void testOriginPTS() {
     expect(timeline.originPTS() == 8589934000LL, "33bit 上限付近の origin_pts を保持する");
 }
 
+std::array<uint8_t, 188> makeTSPacket(uint16_t pid, uint8_t adaptationFieldControl, uint8_t cc,
+    uint8_t scrambling = 0) {
+    std::array<uint8_t, 188> packet = {};
+    packet[0] = 0x47;
+    packet[1] = (uint8_t)((pid >> 8) & 0x1f);
+    packet[2] = (uint8_t)(pid & 0xff);
+    packet[3] = (uint8_t)((scrambling << 6) | (adaptationFieldControl << 4) | (cc & 0x0f));
+    return packet;
+}
+
+uint8_t packetCC(const std::array<uint8_t, 188>& packet) {
+    return packet[3] & 0x0f;
+}
+
+void testContinuityRewriter() {
+    TSRContinuityRewriter rewriter;
+
+    auto first = makeTSPacket(0x0100, 0x01, 7);
+    auto second = makeTSPacket(0x0100, 0x01, 2);
+    auto third = makeTSPacket(0x0100, 0x01, 15);
+    rewriter.process(first.data());
+    rewriter.process(second.data());
+    rewriter.process(third.data());
+    expect(packetCC(first) == 7, "初出 PID は元の CC を維持する");
+    expect(packetCC(second) == 8 && packetCC(third) == 9, "同一 PID の payload で CC が 1 ずつ進む");
+
+    rewriter.reset();
+    auto wrapFirst = makeTSPacket(0x0100, 0x01, 15);
+    auto wrapSecond = makeTSPacket(0x0100, 0x01, 8);
+    rewriter.process(wrapFirst.data());
+    rewriter.process(wrapSecond.data());
+    expect(packetCC(wrapSecond) == 0, "CC を 15 から 0 へ wrap する");
+
+    rewriter.reset();
+    auto payload = makeTSPacket(0x0101, 0x01, 4);
+    auto adaptationOnly = makeTSPacket(0x0101, 0x02, 12);
+    auto payloadAfterAdaptation = makeTSPacket(0x0101, 0x03, 0);
+    rewriter.process(payload.data());
+    rewriter.process(adaptationOnly.data());
+    rewriter.process(payloadAfterAdaptation.data());
+    expect(packetCC(adaptationOnly) == 4, "adaptation field only で CC が進まない");
+    expect(packetCC(payloadAfterAdaptation) == 5, "afc 0x03 は payload ありとして CC が進む");
+
+    rewriter.reset();
+    auto pidAFirst = makeTSPacket(0x0102, 0x01, 3);
+    auto pidBFirst = makeTSPacket(0x0103, 0x01, 9);
+    auto pidASecond = makeTSPacket(0x0102, 0x01, 0);
+    auto pidBSecond = makeTSPacket(0x0103, 0x01, 0);
+    rewriter.process(pidAFirst.data());
+    rewriter.process(pidBFirst.data());
+    rewriter.process(pidASecond.data());
+    rewriter.process(pidBSecond.data());
+    expect(packetCC(pidASecond) == 4 && packetCC(pidBSecond) == 10, "複数 PID の CC を独立に管理する");
+
+    rewriter.reset();
+    auto upperFirst = makeTSPacket(0x0104, 0x03, 5, 2);
+    auto upperSecond = makeTSPacket(0x0104, 0x03, 0, 2);
+    const auto upperBits = upperSecond[3] & 0xf0;
+    rewriter.process(upperFirst.data());
+    rewriter.process(upperSecond.data());
+    expect((upperSecond[3] & 0xf0) == upperBits && packetCC(upperSecond) == 6,
+        "CC 書き換え時に pkt[3] の上位 4bit を保持する");
+
+    auto nullPacket = makeTSPacket(0x1fff, 0x01, 13);
+    rewriter.process(nullPacket.data());
+    expect(packetCC(nullPacket) == 13, "null packet は書き換えない");
+
+    auto reserved = makeTSPacket(0x0105, 0x00, 6);
+    auto validAfterReserved = makeTSPacket(0x0105, 0x01, 11);
+    rewriter.process(reserved.data());
+    rewriter.process(validAfterReserved.data());
+    expect(packetCC(reserved) == 6 && packetCC(validAfterReserved) == 11,
+        "afc 0x00 は状態を変更しない");
+}
+
 } // namespace
 
 int main() {
@@ -145,6 +221,7 @@ int main() {
     testNormalization();
     testErrors();
     testOriginPTS();
+    testContinuityRewriter();
 
     if (failures != 0) {
         std::cerr << failures << " 件のテストが失敗しました。" << std::endl;

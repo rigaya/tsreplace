@@ -243,7 +243,7 @@ protected:
     EncoderType getEncoderType();
     RGY_ERR initEncoder();
     RGY_ERR readTS(std::vector<uniqueRGYTSPacket>& packetBuffer);
-    RGY_ERR writePacket(const RGYTSPacket *pkt);
+    RGY_ERR writePacket(RGYTSPacket *pkt);
     RGY_ERR writeReplacedPCR(const uint64_t pcr);
     RGY_ERR writeReplacedPAT(const RGYTS_PAT *pat);
     RGY_ERR writeReplacedPMT(const RGYTSDemuxResult& result);
@@ -329,6 +329,7 @@ protected:
     int m_selectService; // 出力するserviceの番号
     bool m_copyFileTs; // ファイルのタイムスタンプをコピー
     TSRCutTimeline m_cut; // CM カット用のタイムライン
+    TSRContinuityRewriter m_ccRewriter; // CM カット時の continuity_counter 再構成
     decltype(parse_nal_unit_h264_c) *m_parseNalH264; // H.264用のnal unit分解関数へのポインタ
 
     decltype(parse_nal_unit_hevc_c) *m_parseNalHevc; // HEVC用のnal unit分解関数へのポインタ
