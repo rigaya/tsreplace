@@ -308,6 +308,7 @@ if exist rgy_rev.h.%PID%.tmp del rgy_rev.h.%PID%.tmp &gt; nul 2&gt;&amp;1</Comma
     <ClCompile Include="rgy_pipe_linux.cpp" />
     <ClCompile Include="rgy_simd.cpp" />
     <ClCompile Include="rgy_tsdemux.cpp" />
+    <ClCompile Include="rgy_tscut.cpp" />
     <ClCompile Include="rgy_tsstruct.cpp" />
     <ClCompile Include="rgy_tsutil.cpp" />
     <ClCompile Include="rgy_util.cpp" />
@@ -337,6 +338,7 @@ if exist rgy_rev.h.%PID%.tmp del rgy_rev.h.%PID%.tmp &gt; nul 2&gt;&amp;1</Comma
     <ClInclude Include="rgy_simd.h" />
     <ClInclude Include="rgy_tchar.h" />
     <ClInclude Include="rgy_tsdemux.h" />
+    <ClInclude Include="rgy_tscut.h" />
     <ClInclude Include="rgy_tsstruct.h" />
     <ClInclude Include="rgy_tsutil.h" />
     <ClInclude Include="rgy_util.h" />
