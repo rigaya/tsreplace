@@ -1356,6 +1356,21 @@ RGY_ERR TSReplace::writePacket(RGYTSPacket *pkt) {
     return RGY_ERR_NONE;
 }
 
+int64_t TSReplace::srcRel(int64_t ts33) const {
+    return diffTimestampTsAMinusB(ts33, m_cut.originPTS());
+}
+
+int64_t TSReplace::mapToOutput(int64_t ts33) const {
+    if (ts33 == TIMESTAMP_INVALID_VALUE || !cutMode()) {
+        return ts33;
+    }
+    return (ts33 - m_cut.removedBefore(srcRel(ts33))) & ((int64_t{ 1 } << 33) - 1);
+}
+
+bool TSReplace::isCutTimestamp(int64_t ts33) const {
+    return cutMode() && ts33 != TIMESTAMP_INVALID_VALUE && m_cut.isCut(srcRel(ts33));
+}
+
 uint8_t TSReplace::getvideoDecCtrlEncodeFormat(const int height) {
     switch (height) {
     case 1080: return 0x00;
@@ -2174,16 +2189,29 @@ RGY_ERR TSReplace::restruct() {
                             }
                         }
                         if (m_pcrPIDReplace) {
-                            writeReplacedPCR(ret.pcr);
-                        } else {
+                            if (!isCutTimestamp(ret.pcr)) {
+                                writeReplacedPCR(mapToOutput(ret.pcr));
+                            }
+                        } else if (!isCutTimestamp(pcr)) {
+                            if (cutMode()) {
+                                auto *packet = tspkt->packet.data();
+                                const auto pcrBase = tsPacketReadPCRBase(packet);
+                                if (pcrBase >= 0) {
+                                    tsPacketWritePCRBase(packet, mapToOutput(pcrBase));
+                                }
+                                const auto opcrBase = tsPacketReadOPCRBase(packet);
+                                if (opcrBase >= 0) {
+                                    tsPacketWriteOPCRBase(packet, mapToOutput(opcrBase));
+                                }
+                            }
                             writePacket(tspkt.get());
                         }
                         break;
                     }
                     case RGYTSPacketType::VID:
                         // PCRが映像のストリームに含まれる場合は、別PIDで独立したPCRパケットを生成する
-                        if (m_pcrPIDReplace && ret.pcr != TIMESTAMP_INVALID_VALUE) {
-                            writeReplacedPCR(ret.pcr);
+                        if (m_pcrPIDReplace && ret.pcr != TIMESTAMP_INVALID_VALUE && !isCutTimestamp(ret.pcr)) {
+                            writeReplacedPCR(mapToOutput(ret.pcr));
                         }
                         if (tspkt->header.PayloadStartFlag) {
                             m_vidPTS = ret.pts;

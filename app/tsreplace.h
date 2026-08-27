@@ -257,6 +257,9 @@ protected:
     std::tuple<RGY_ERR, bool, bool> checkPacket(const AVPacket *pkt);
     int64_t getStartPointPTS() const;
     bool cutMode() const { return m_cut.enabled(); }
+    int64_t srcRel(int64_t ts33) const;
+    int64_t mapToOutput(int64_t ts33) const;
+    bool isCutTimestamp(int64_t ts33) const;
 
     void AddMessage(RGYLogLevel log_level, const tstring &str) {
         if (m_log == nullptr || log_level < m_log->getLogLevel(RGY_LOGT_APP)) {

@@ -49,6 +49,76 @@ tstring cutRangeError(size_t lineNumber, const TCHAR *reason, const TSRCutRange&
 
 } // namespace
 
+namespace {
+
+int tsPacketClockOffset(const uint8_t *pkt188, bool opcr) {
+    if (pkt188 == nullptr) {
+        return -1;
+    }
+    const auto adaptationFieldControl = (pkt188[3] >> 4) & 0x03;
+    if ((adaptationFieldControl & 0x02) == 0) {
+        return -1;
+    }
+    const auto adaptationFieldLength = pkt188[4];
+    if (adaptationFieldLength < 1 || adaptationFieldLength > 183) {
+        return -1;
+    }
+    const auto flags = pkt188[5];
+    const auto targetFlag = opcr ? 0x08 : 0x10;
+    if ((flags & targetFlag) == 0) {
+        return -1;
+    }
+    const auto offset = 6 + ((opcr && (flags & 0x10)) ? 6 : 0);
+    const auto requiredLength = offset + 1;
+    return (adaptationFieldLength >= requiredLength) ? offset : -1;
+}
+
+int64_t tsPacketReadClockBase(const uint8_t *pkt188, bool opcr) {
+    const auto offset = tsPacketClockOffset(pkt188, opcr);
+    if (offset < 0) {
+        return -1;
+    }
+    const auto *clock = pkt188 + offset;
+    return ((int64_t)clock[0] << 25)
+        | ((int64_t)clock[1] << 17)
+        | ((int64_t)clock[2] << 9)
+        | ((int64_t)clock[3] << 1)
+        | ((clock[4] >> 7) & 0x01);
+}
+
+bool tsPacketWriteClockBase(uint8_t *pkt188, int64_t clockBase, bool opcr) {
+    const auto offset = tsPacketClockOffset(pkt188, opcr);
+    if (offset < 0) {
+        return false;
+    }
+    const auto base = (uint64_t)clockBase & ((uint64_t{ 1 } << 33) - 1);
+    auto *clock = pkt188 + offset;
+    clock[0] = (uint8_t)(base >> 25);
+    clock[1] = (uint8_t)(base >> 17);
+    clock[2] = (uint8_t)(base >> 9);
+    clock[3] = (uint8_t)(base >> 1);
+    clock[4] = (uint8_t)((clock[4] & 0x7f) | ((base & 0x01) << 7));
+    return true;
+}
+
+} // namespace
+
+int64_t tsPacketReadPCRBase(const uint8_t *pkt188) {
+    return tsPacketReadClockBase(pkt188, false);
+}
+
+bool tsPacketWritePCRBase(uint8_t *pkt188, int64_t pcrBase) {
+    return tsPacketWriteClockBase(pkt188, pcrBase, false);
+}
+
+int64_t tsPacketReadOPCRBase(const uint8_t *pkt188) {
+    return tsPacketReadClockBase(pkt188, true);
+}
+
+bool tsPacketWriteOPCRBase(uint8_t *pkt188, int64_t opcrBase) {
+    return tsPacketWriteClockBase(pkt188, opcrBase, true);
+}
+
 TSRCutTimeline::TSRCutTimeline() :
     m_ranges(),
     m_removedBeforeRange(),

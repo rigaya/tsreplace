@@ -151,6 +151,94 @@ uint8_t packetCC(const std::array<uint8_t, 188>& packet) {
     return packet[3] & 0x0f;
 }
 
+void setPacketClock(std::array<uint8_t, 188>& packet, size_t offset, int64_t base,
+    uint8_t reservedAndExtHigh, uint8_t extLow) {
+    packet[offset + 0] = (uint8_t)(base >> 25);
+    packet[offset + 1] = (uint8_t)(base >> 17);
+    packet[offset + 2] = (uint8_t)(base >> 9);
+    packet[offset + 3] = (uint8_t)(base >> 1);
+    packet[offset + 4] = (uint8_t)(((base & 0x01) << 7) | (reservedAndExtHigh & 0x7f));
+    packet[offset + 5] = extLow;
+}
+
+std::array<uint8_t, 188> makeClockPacket(uint8_t adaptationFieldLength, uint8_t flags) {
+    auto packet = makeTSPacket(0x0100, 0x03, 0);
+    packet.fill(0xff);
+    packet[0] = 0x47;
+    packet[1] = 0x01;
+    packet[2] = 0x00;
+    packet[3] = 0x30;
+    packet[4] = adaptationFieldLength;
+    packet[5] = flags;
+    return packet;
+}
+
+void testPCRReadWrite() {
+    constexpr int64_t PCR_BASE = 0x123456789LL;
+    constexpr int64_t PCR_BASE_MAX = 0x1ffffffffLL;
+    auto packet = makeClockPacket(7, 0x10);
+    setPacketClock(packet, 6, PCR_BASE, 0x55, 0xa5);
+    expect(tsPacketReadPCRBase(packet.data()) == PCR_BASE, "PCR_base を読み取る");
+    const auto preservedLow7 = packet[10] & 0x7f;
+    const auto preservedExtLow = packet[11];
+    expect(tsPacketWritePCRBase(packet.data(), PCR_BASE_MAX), "PCR_base を書き込む");
+    expect(tsPacketReadPCRBase(packet.data()) == PCR_BASE_MAX, "33bit 上限の PCR_base を往復する");
+    expect((packet[10] & 0x7f) == preservedLow7 && packet[11] == preservedExtLow,
+        "PCR 書き込み時に reserved bit と ext を保持する");
+
+    constexpr int64_t OPCR_BASE = 0x102030405LL;
+    constexpr int64_t NEW_PCR_BASE = 0x010203040LL;
+    constexpr int64_t NEW_OPCR_BASE = 0x1abcdef01LL;
+    auto pcrOpcrPacket = makeClockPacket(13, 0x18);
+    setPacketClock(pcrOpcrPacket, 6, PCR_BASE, 0x3f, 0x12);
+    setPacketClock(pcrOpcrPacket, 12, OPCR_BASE, 0x41, 0x34);
+    const auto preservedOPCRLow7 = pcrOpcrPacket[16] & 0x7f;
+    const auto preservedOPCRExtLow = pcrOpcrPacket[17];
+    expect(tsPacketReadPCRBase(pcrOpcrPacket.data()) == PCR_BASE
+        && tsPacketReadOPCRBase(pcrOpcrPacket.data()) == OPCR_BASE,
+        "PCR / OPCR を独立して読み取る");
+    expect(tsPacketWritePCRBase(pcrOpcrPacket.data(), NEW_PCR_BASE)
+        && tsPacketReadOPCRBase(pcrOpcrPacket.data()) == OPCR_BASE,
+        "PCR 書き込みで OPCR を変更しない");
+    expect(tsPacketWriteOPCRBase(pcrOpcrPacket.data(), NEW_OPCR_BASE)
+        && tsPacketReadPCRBase(pcrOpcrPacket.data()) == NEW_PCR_BASE
+        && tsPacketReadOPCRBase(pcrOpcrPacket.data()) == NEW_OPCR_BASE,
+        "OPCR 書き込みで PCR を変更しない");
+    expect((pcrOpcrPacket[16] & 0x7f) == preservedOPCRLow7 && pcrOpcrPacket[17] == preservedOPCRExtLow,
+        "OPCR 書き込み時に reserved bit と ext を保持する");
+
+    auto shortOPCRPacket = makeClockPacket(12, 0x18);
+    const auto shortOPCRPacketOriginal = shortOPCRPacket;
+    expect(tsPacketReadOPCRBase(shortOPCRPacket.data()) < 0
+        && !tsPacketWriteOPCRBase(shortOPCRPacket.data(), OPCR_BASE)
+        && shortOPCRPacket == shortOPCRPacketOriginal,
+        "OPCR までの adaptation field 長が足りないとき packet を変更しない");
+
+    auto opcrOnlyPacket = makeClockPacket(7, 0x08);
+    setPacketClock(opcrOnlyPacket, 6, OPCR_BASE, 0x7e, 0x56);
+    expect(tsPacketReadPCRBase(opcrOnlyPacket.data()) < 0
+        && tsPacketReadOPCRBase(opcrOnlyPacket.data()) == OPCR_BASE,
+        "PCR なしの OPCR を読み取る");
+
+    auto shortPacket = makeClockPacket(6, 0x10);
+    const auto shortPacketOriginal = shortPacket;
+    expect(tsPacketReadPCRBase(shortPacket.data()) < 0
+        && !tsPacketWritePCRBase(shortPacket.data(), PCR_BASE)
+        && shortPacket == shortPacketOriginal,
+        "adaptation field が短いとき packet を変更しない");
+
+    auto noAdaptationPacket = makeClockPacket(7, 0x10);
+    noAdaptationPacket[3] = 0x10;
+    expect(tsPacketReadPCRBase(noAdaptationPacket.data()) < 0
+        && !tsPacketWritePCRBase(noAdaptationPacket.data(), PCR_BASE),
+        "adaptation field がない packet を変更しない");
+
+    auto noPCRFlagPacket = makeClockPacket(7, 0x00);
+    expect(tsPacketReadPCRBase(noPCRFlagPacket.data()) < 0
+        && !tsPacketWritePCRBase(noPCRFlagPacket.data(), PCR_BASE),
+        "PCR_flag がない packet を変更しない");
+}
+
 void testContinuityRewriter() {
     TSRContinuityRewriter rewriter;
 
@@ -221,6 +309,7 @@ int main() {
     testNormalization();
     testErrors();
     testOriginPTS();
+    testPCRReadWrite();
     testContinuityRewriter();
 
     if (failures != 0) {

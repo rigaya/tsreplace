@@ -17,6 +17,11 @@ struct TSRCutRange {
     int64_t end;
 };
 
+int64_t tsPacketReadPCRBase(const uint8_t *pkt188);
+bool tsPacketWritePCRBase(uint8_t *pkt188, int64_t pcrBase);
+int64_t tsPacketReadOPCRBase(const uint8_t *pkt188);
+bool tsPacketWriteOPCRBase(uint8_t *pkt188, int64_t opcrBase);
+
 class TSRCutTimeline {
 public:
     TSRCutTimeline();
