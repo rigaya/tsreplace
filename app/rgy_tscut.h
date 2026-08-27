@@ -25,6 +25,7 @@ public:
     bool enabled() const;
     int64_t originPTS() const;
     size_t rangeCount() const;
+    const std::vector<TSRCutRange>& ranges() const;
     int64_t totalRemoved() const;
 
     bool isCut(int64_t t) const;

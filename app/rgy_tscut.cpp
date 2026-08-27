@@ -234,6 +234,10 @@ size_t TSRCutTimeline::rangeCount() const {
     return m_ranges.size();
 }
 
+const std::vector<TSRCutRange>& TSRCutTimeline::ranges() const {
+    return m_ranges;
+}
+
 int64_t TSRCutTimeline::totalRemoved() const {
     return m_totalRemoved;
 }

@@ -210,6 +210,7 @@ struct TSRReplaceParams {
     bool addAud;
     bool addHeaders;
     bool removeTypeD;
+    bool removeTypeDExplicitlyDisabled;
     bool removeNonTargetService;
     int selectService;
     bool copyFileTs;

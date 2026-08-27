@@ -165,6 +165,7 @@ TSRReplaceParams::TSRReplaceParams() :
     addAud(true),
     addHeaders(true),
     removeTypeD(false),
+    removeTypeDExplicitlyDisabled(false),
     removeNonTargetService(true),
     selectService(0),
     copyFileTs(false) {
@@ -1107,6 +1108,14 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         }
         AddMessage(RGY_LOG_INFO, _T("Loaded %d cut ranges, total cut: %.3f sec\n"),
             (int)m_cut.rangeCount(), m_cut.totalRemoved() / (double)TS_TIMEBASE);
+        if (!m_removeNonTargetService) {
+            AddMessage(RGY_LOG_ERROR, _T("--preserve-other-services は --cut-list と併用できない\n"));
+            return RGY_ERR_INVALID_PARAM;
+        }
+        if (prms.removeTypeDExplicitlyDisabled) {
+            AddMessage(RGY_LOG_WARN, _T("--cut-list 指定時は type-d packet の削除が強制される (--no-remove-typed は無視)\n"));
+        }
+        m_removeTypeD = true;
     }
 
     // 置換映像EOF終了関連
@@ -1838,6 +1847,13 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
             AddMessage(RGY_LOG_WARN, _T("cut list の origin_pts (%lld) が映像先頭フレーム PTS (%lld) と一致しない (差 %+.1f ms)\n"),
                 (long long)m_cut.originPTS(), (long long)m_vidFirstFramePTS, diff * 1000.0 / (double)TS_TIMEBASE);
         }
+        const auto startRel = diffTimestampTsAMinusB(m_outputStartTimestamp, m_cut.originPTS());
+        for (const auto& range : m_cut.ranges()) {
+            if (range.end <= startRel) {
+                AddMessage(RGY_LOG_WARN, _T("cut 区間 [%lld, %lld) が出力開始点 (%lld) より前で終了している (--replace-delay と二重指定の可能性)\n"),
+                    (long long)range.start, (long long)range.end, (long long)startRel);
+            }
+        }
     }
     if (m_replaceDelay > 0) {
         AddMessage(RGY_LOG_INFO, _T("  Output start PTS: %11lld (delay %lld [%+7.1f ms])\n"), (long long)m_outputStartTimestamp, (long long)m_replaceDelay, m_replaceDelay * 1000.0 / (double)TS_TIMEBASE);
@@ -2472,10 +2488,12 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
     }
     if (IS_OPTION("remove-typed")) {
         prm.removeTypeD = true;
+        prm.removeTypeDExplicitlyDisabled = false;
         return 0;
     }
     if (IS_OPTION("no-remove-typed")) {
         prm.removeTypeD = false;
+        prm.removeTypeDExplicitlyDisabled = true;
         return 0;
     }
     if (IS_OPTION("service")) {
