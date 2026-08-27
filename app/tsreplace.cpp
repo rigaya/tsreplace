@@ -2118,9 +2118,9 @@ RGY_ERR TSReplace::restruct() {
                 && m_endAtReplaceEOF
                 && m_outputEndTimestamp != TIMESTAMP_INVALID_VALUE
                 && curTimestamp != TIMESTAMP_INVALID_VALUE
-                && diffTimestampTsAMinusB(curTimestamp, m_outputEndTimestamp) > 0) {
+                && diffTimestampTsAMinusB(mapToOutput(curTimestamp), m_outputEndTimestamp) > 0) {
                 AddMessage(RGY_LOG_DEBUG, _T("Stop output at timestamp %11lld (>= EOF+margin %11lld).\n"),
-                    (long long)curTimestamp, (long long)m_outputEndTimestamp);
+                    (long long)mapToOutput(curTimestamp), (long long)m_outputEndTimestamp);
                 return RGY_ERR_NONE;
             }
 
@@ -2162,7 +2162,7 @@ RGY_ERR TSReplace::restruct() {
                     writeReplacedPMT(*pmtResult);
                     pmtResult.reset();
                     if (m_startPoint == TSRReplaceStartPoint::FirstPacket) {
-                        m_vidDTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
+                        m_vidDTSOutMax = m_vidFirstTimestamp = mapToOutput(getStartPointPTS());
                         if (auto err2 = writeReplacedVideo(); (err2 != RGY_ERR_NONE && err2 != RGY_ERR_MORE_DATA)) {
                             return err2;
                         }
@@ -2219,20 +2219,20 @@ RGY_ERR TSReplace::restruct() {
                             writeReplacedPCR(mapToOutput(ret.pcr));
                         }
                         if (tspkt->header.PayloadStartFlag) {
-                            m_vidPTS = ret.pts;
-                            m_vidDTS = ret.dts;
+                            m_vidPTS = mapToOutput(ret.pts);
+                            m_vidDTS = mapToOutput(ret.dts);
                             if (m_vidFirstFramePTS == TIMESTAMP_INVALID_VALUE) {
-                                m_vidFirstFramePTS = m_vidPTS;
+                                m_vidFirstFramePTS = ret.pts;
                                 //AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstFramePTS);
                             }
                             if (m_vidFirstFrameDTS == TIMESTAMP_INVALID_VALUE) {
-                                m_vidFirstFrameDTS = m_vidDTS;
+                                m_vidFirstFrameDTS = ret.dts;
                                 //AddMessage(RGY_LOG_DEBUG, _T("First Video DTS:     %11lld\n"), m_vidFirstFrameDTS);
                             }
                             if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
                                 const auto startPoint = getStartPointPTS();
-                                if (startPoint <= m_vidPTS) {
-                                    m_vidDTSOutMax = m_vidFirstTimestamp = getStartPointPTS();
+                                if (startPoint <= ret.pts) {
+                                    m_vidDTSOutMax = m_vidFirstTimestamp = mapToOutput(getStartPointPTS());
                                 }
                             }
                         }
