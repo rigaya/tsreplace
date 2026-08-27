@@ -3,7 +3,10 @@
 // -----------------------------------------------------------------------------------------
 
 #include "rgy_tscut.h"
+#include "rgy_tsstruct.h"
+#include "rgy_tsutil.h"
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -239,6 +242,108 @@ void testPCRReadWrite() {
         "PCR_flag がない packet を変更しない");
 }
 
+void setTestPESTimestamp(std::array<uint8_t, 188>& packet, size_t offset, int64_t timestamp, uint8_t prefix) {
+    const auto ts = (uint64_t)timestamp & ((uint64_t{ 1 } << 33) - 1);
+    packet[offset + 0] = (uint8_t)((prefix << 4) | (((ts >> 30) & 0x07) << 1) | 0x01);
+    packet[offset + 1] = (uint8_t)(ts >> 22);
+    packet[offset + 2] = (uint8_t)((((ts >> 15) & 0x7f) << 1) | 0x01);
+    packet[offset + 3] = (uint8_t)(ts >> 7);
+    packet[offset + 4] = (uint8_t)(((ts & 0x7f) << 1) | 0x01);
+}
+
+int64_t readTestPESTimestamp(const uint8_t *field) {
+    return ((int64_t)((field[0] & 0x0e) >> 1) << 30)
+        | ((int64_t)field[1] << 22)
+        | ((int64_t)(field[2] >> 1) << 15)
+        | ((int64_t)field[3] << 7)
+        | ((int64_t)field[4] >> 1);
+}
+
+std::array<uint8_t, 188> makePESPacket(uint8_t streamId, uint8_t ptsDtsFlags, size_t startOffset = 4) {
+    std::array<uint8_t, 188> packet;
+    packet.fill(0xff);
+    packet[0] = 0x47;
+    packet[1] = 0x41;
+    packet[2] = 0x12;
+    packet[3] = 0x10;
+    if (startOffset + PES_HEADER_SIZE <= packet.size()) {
+        packet[startOffset + 0] = 0x00;
+        packet[startOffset + 1] = 0x00;
+        packet[startOffset + 2] = 0x01;
+        packet[startOffset + 3] = streamId;
+        packet[startOffset + 4] = 0x00;
+        packet[startOffset + 5] = 0x00;
+        packet[startOffset + 6] = 0x80;
+        packet[startOffset + 7] = ptsDtsFlags;
+        packet[startOffset + 8] = (ptsDtsFlags & 0x40) ? 10 : ((ptsDtsFlags & 0x80) ? 5 : 0);
+    }
+    return packet;
+}
+
+bool pesMarkersSet(const uint8_t *field) {
+    return (field[0] & 0x01) && (field[2] & 0x01) && (field[4] & 0x01);
+}
+
+void testPESRewrite() {
+    constexpr int64_t OLD_PTS = 0x012345678LL;
+    constexpr int64_t OLD_DTS = 0x001234567LL;
+    constexpr int64_t NEW_PTS = 0x1ffffffffLL;
+    constexpr int64_t NEW_DTS = 0x1abcdef01LL;
+
+    auto ptsOnly = makePESPacket(0xc0, 0x80);
+    setTestPESTimestamp(ptsOnly, 13, OLD_PTS, 0x02);
+    expect(tsPacketRewritePESTimestamps(ptsOnly.data(), ptsOnly.size(), NEW_PTS, TIMESTAMP_INVALID_VALUE),
+        "PTS のみの PES timestamp を書き換える");
+    expect(readTestPESTimestamp(ptsOnly.data() + 13) == NEW_PTS,
+        "33bit 上限の PTS を往復する");
+    expect((ptsOnly[13] >> 4) == 0x02 && pesMarkersSet(ptsOnly.data() + 13),
+        "PTS の prefix を保持し marker bit を立てる");
+
+    auto ptsDts = makePESPacket(0xe0, 0xc0);
+    setTestPESTimestamp(ptsDts, 13, OLD_PTS, 0x03);
+    setTestPESTimestamp(ptsDts, 18, OLD_DTS, 0x01);
+    expect(tsPacketRewritePESTimestamps(ptsDts.data(), ptsDts.size(), NEW_PTS, NEW_DTS),
+        "PTS / DTS の両方を書き換える");
+    expect(readTestPESTimestamp(ptsDts.data() + 13) == NEW_PTS
+        && readTestPESTimestamp(ptsDts.data() + 18) == NEW_DTS,
+        "書き換え後の PTS / DTS を読み戻せる");
+    expect((ptsDts[13] >> 4) == 0x03 && (ptsDts[18] >> 4) == 0x01
+        && pesMarkersSet(ptsDts.data() + 13) && pesMarkersSet(ptsDts.data() + 18),
+        "PTS / DTS それぞれの prefix と marker bit を保持する");
+
+    auto preserveDts = makePESPacket(0xe0, 0xc0);
+    setTestPESTimestamp(preserveDts, 13, OLD_PTS, 0x03);
+    setTestPESTimestamp(preserveDts, 18, OLD_DTS, 0x01);
+    std::array<uint8_t, 5> originalDts = {};
+    std::copy_n(preserveDts.data() + 18, originalDts.size(), originalDts.data());
+    expect(tsPacketRewritePESTimestamps(preserveDts.data(), preserveDts.size(), NEW_PTS, TIMESTAMP_INVALID_VALUE)
+        && std::equal(originalDts.begin(), originalDts.end(), preserveDts.begin() + 18),
+        "DTS に無効値を渡したとき DTS フィールドを変更しない");
+
+    auto noPtsFlag = makePESPacket(0xc0, 0x00);
+    const auto noPtsFlagOriginal = noPtsFlag;
+    expect(!tsPacketRewritePESTimestamps(noPtsFlag.data(), noPtsFlag.size(), NEW_PTS, NEW_DTS)
+        && noPtsFlag == noPtsFlagOriginal,
+        "PTS flag がない PES を変更しない");
+
+    auto privateStream2 = makePESPacket(0xbf, 0xc0);
+    setTestPESTimestamp(privateStream2, 13, OLD_PTS, 0x03);
+    setTestPESTimestamp(privateStream2, 18, OLD_DTS, 0x01);
+    const auto privateStream2Original = privateStream2;
+    expect(!tsPacketRewritePESTimestamps(privateStream2.data(), privateStream2.size(), NEW_PTS, NEW_DTS)
+        && privateStream2 == privateStream2Original,
+        "private_stream_2 を optional PES header として扱わない");
+
+    auto truncated = makePESPacket(0xc0, 0x80, 176);
+    truncated[185] = 0x21;
+    truncated[186] = 0x00;
+    truncated[187] = 0x01;
+    const auto truncatedOriginal = truncated;
+    expect(!tsPacketRewritePESTimestamps(truncated.data(), truncated.size(), NEW_PTS, TIMESTAMP_INVALID_VALUE)
+        && truncated == truncatedOriginal,
+        "PTS が packet 末尾に収まらない PES を変更しない");
+}
+
 void testContinuityRewriter() {
     TSRContinuityRewriter rewriter;
 
@@ -310,6 +415,7 @@ int main() {
     testErrors();
     testOriginPTS();
     testPCRReadWrite();
+    testPESRewrite();
     testContinuityRewriter();
 
     if (failures != 0) {

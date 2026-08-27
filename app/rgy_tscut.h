@@ -21,6 +21,7 @@ int64_t tsPacketReadPCRBase(const uint8_t *pkt188);
 bool tsPacketWritePCRBase(uint8_t *pkt188, int64_t pcrBase);
 int64_t tsPacketReadOPCRBase(const uint8_t *pkt188);
 bool tsPacketWriteOPCRBase(uint8_t *pkt188, int64_t opcrBase);
+bool tsPacketRewritePESTimestamps(uint8_t *pkt188, size_t size, int64_t pts, int64_t dts);
 
 class TSRCutTimeline {
 public:

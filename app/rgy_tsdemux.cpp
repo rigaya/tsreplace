@@ -435,7 +435,7 @@ RGYTSPESHeader RGYTSDemuxer::parsePESHeader(const std::vector<uint8_t>& pkt) {
     }
     pes.stream_id = ptr[3];
     pes.pes_len = read16(ptr + 4);
-    if (pkt_fin - ptr >= PES_HEADER_SIZE && (ptr[6] & 0xC0) == (0x80)) {
+    if (pkt_fin - ptr >= PES_HEADER_SIZE && rgyPESStreamHasOptionalHeader((uint8_t)pes.stream_id) && (ptr[6] & 0xC0) == (0x80)) {
         pes.scramble                  = (ptr[6] & 0x30) >> 8;
         pes.priority                  = (ptr[6] & 0x08) != 0;
         pes.data_align                = (ptr[6] & 0x04) != 0;

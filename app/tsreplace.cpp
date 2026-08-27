@@ -1013,6 +1013,7 @@ TSReplace::TSReplace() :
     m_copyFileTs(false),
     m_cut(),
     m_ccRewriter(),
+    m_pidCutState(),
     m_parseNalH264(get_parse_nal_unit_h264_func()),
     m_parseNalHevc(get_parse_nal_unit_hevc_func()),
     m_encoder(),
@@ -1110,6 +1111,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         AddMessage(RGY_LOG_INFO, _T("Loaded %d cut ranges, total cut: %.3f sec\n"),
             (int)m_cut.rangeCount(), m_cut.totalRemoved() / (double)TS_TIMEBASE);
         m_ccRewriter.reset();
+        m_pidCutState.clear();
         if (!m_removeNonTargetService) {
             AddMessage(RGY_LOG_ERROR, _T("--preserve-other-services は --cut-list と併用できない\n"));
             return RGY_ERR_INVALID_PARAM;
@@ -2247,6 +2249,28 @@ RGY_ERR TSReplace::restruct() {
                                     } else {
                                         outputPkt = false;
                                     }
+                                }
+                            }
+                            if (cutMode() && service != nullptr && tspkt->header.PID == service->aud0.stream.pid) {
+                                auto& state = m_pidCutState[tspkt->header.PID];
+                                if (tspkt->header.PayloadStartFlag) {
+                                    state.seenPUSI = true;
+                                    state.keepPES = ret.pts == TIMESTAMP_INVALID_VALUE || !isCutTimestamp(ret.pts);
+                                    if (state.keepPES && ret.pts != TIMESTAMP_INVALID_VALUE) {
+                                        auto *packet = tspkt->packet.data();
+                                        if (!tsPacketRewritePESTimestamps(packet, tspkt->datasize(),
+                                            mapToOutput(ret.pts), mapToOutput(ret.dts))) {
+                                            AddMessage(RGY_LOG_WARN, _T("PID 0x%04x: PES header の timestamp を書き換えられなかったため、この PES を破棄する\n"),
+                                                tspkt->header.PID);
+                                            state.keepPES = false;
+                                        }
+                                    }
+                                }
+                                if (!state.seenPUSI) {
+                                    state.keepPES = false;
+                                }
+                                if (!state.keepPES) {
+                                    outputPkt = false;
                                 }
                             }
                             if (outputPkt) {

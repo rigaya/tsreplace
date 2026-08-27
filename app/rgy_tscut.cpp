@@ -6,10 +6,14 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+
+#include "rgy_tsstruct.h"
+#include "rgy_tsutil.h"
 
 namespace {
 
@@ -117,6 +121,80 @@ int64_t tsPacketReadOPCRBase(const uint8_t *pkt188) {
 
 bool tsPacketWriteOPCRBase(uint8_t *pkt188, int64_t opcrBase) {
     return tsPacketWriteClockBase(pkt188, opcrBase, true);
+}
+
+namespace {
+
+void tsPacketWritePESTimestamp(uint8_t *field, int64_t timestamp) {
+    const auto ts = (uint64_t)timestamp & ((uint64_t{ 1 } << 33) - 1);
+    field[0] = (uint8_t)((field[0] & 0xf0) | (((ts >> 30) & 0x07) << 1) | 0x01);
+    field[1] = (uint8_t)(ts >> 22);
+    field[2] = (uint8_t)((((ts >> 15) & 0x7f) << 1) | 0x01);
+    field[3] = (uint8_t)(ts >> 7);
+    field[4] = (uint8_t)(((ts & 0x7f) << 1) | 0x01);
+}
+
+} // namespace
+
+bool tsPacketRewritePESTimestamps(uint8_t *pkt188, size_t size, int64_t pts, int64_t dts) {
+    if (pkt188 == nullptr) {
+        return false;
+    }
+
+    static const uint8_t PES_START_CODE[3] = { 0x00, 0x00, 0x01 };
+    uint8_t *pesHeader = nullptr;
+    for (size_t i = 4; i + sizeof(PES_START_CODE) <= size; i++) {
+        if (memcmp(pkt188 + i, PES_START_CODE, sizeof(PES_START_CODE)) == 0) {
+            pesHeader = pkt188 + i;
+            break;
+        }
+    }
+    if (pesHeader == nullptr) {
+        return false;
+    }
+
+    uint8_t *const packetEnd = pkt188 + size;
+    if (packetEnd - pesHeader < PES_START_SIZE) {
+        return false;
+    }
+    const auto streamId = pesHeader[3];
+    if (packetEnd - pesHeader < PES_HEADER_SIZE
+        || !rgyPESStreamHasOptionalHeader(streamId)
+        || (pesHeader[6] & 0xc0) != 0x80) {
+        return false;
+    }
+
+    const auto ptsFlag = (pesHeader[7] & 0x80) != 0;
+    const auto dtsFlag = (pesHeader[7] & 0x40) != 0;
+    auto *field = pesHeader + PES_HEADER_SIZE;
+    uint8_t *ptsField = nullptr;
+    uint8_t *dtsField = nullptr;
+    if (ptsFlag) {
+        if (packetEnd - field < 5) {
+            return false;
+        }
+        ptsField = field;
+        field += 5;
+    }
+    if (dtsFlag) {
+        if (packetEnd - field < 5) {
+            return false;
+        }
+        dtsField = field;
+    }
+
+    const auto rewritePTS = ptsField != nullptr && pts != TIMESTAMP_INVALID_VALUE;
+    const auto rewriteDTS = dtsField != nullptr && dts != TIMESTAMP_INVALID_VALUE;
+    if (!rewritePTS && !rewriteDTS) {
+        return false;
+    }
+    if (rewritePTS) {
+        tsPacketWritePESTimestamp(ptsField, pts);
+    }
+    if (rewriteDTS) {
+        tsPacketWritePESTimestamp(dtsField, dts);
+    }
+    return true;
 }
 
 TSRCutTimeline::TSRCutTimeline() :

@@ -112,6 +112,23 @@ struct RGYTS_PSI {
 static const int PES_START_SIZE = 6;
 static const int PES_HEADER_SIZE = 9;
 
+// MPEG-2 PES で optional PES header を持たない stream_id を除外する。
+static inline bool rgyPESStreamHasOptionalHeader(uint8_t streamId) {
+    switch (streamId) {
+    case 0xbc:
+    case 0xbe:
+    case 0xbf:
+    case 0xf0:
+    case 0xf1:
+    case 0xf2:
+    case 0xf8:
+    case 0xff:
+        return false;
+    default:
+        return true;
+    }
+}
+
 struct RGYTSPESHeader {
     int stream_id;
     int pes_len; // PES_START_SIZEを含まない残りの長さ

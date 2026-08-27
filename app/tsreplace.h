@@ -32,6 +32,7 @@
 #include <deque>
 #include <thread>
 #include <mutex>
+#include <unordered_map>
 #include "rgy_tsdemux.h"
 #include "rgy_tscut.h"
 #include "rgy_avutil.h"
@@ -219,6 +220,11 @@ struct TSRReplaceParams {
     TSRReplaceParams();
 };
 
+struct TSRPidCutState {
+    bool keepPES = false;
+    bool seenPUSI = false;
+};
+
 class TSReplace {
 protected:
     static const int TS_TIMEBASE = 90000;
@@ -333,6 +339,7 @@ protected:
     bool m_copyFileTs; // ファイルのタイムスタンプをコピー
     TSRCutTimeline m_cut; // CM カット用のタイムライン
     TSRContinuityRewriter m_ccRewriter; // CM カット時の continuity_counter 再構成
+    std::unordered_map<uint16_t, TSRPidCutState> m_pidCutState; // PID ごとの PES 出力状態
     decltype(parse_nal_unit_h264_c) *m_parseNalH264; // H.264用のnal unit分解関数へのポインタ
 
     decltype(parse_nal_unit_hevc_c) *m_parseNalHevc; // HEVC用のnal unit分解関数へのポインタ
