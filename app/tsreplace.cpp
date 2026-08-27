@@ -1205,6 +1205,9 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
 
     m_demuxer = std::make_unique<RGYTSDemuxer>();
     m_demuxer->init(log, m_selectService);
+    if (cutMode()) {
+        m_demuxer->setParsePESTimestampAllStreams(true);
+    }
 
     m_replaceFileFormat = prms.replacefileformat;
     if (prms.replacefile.length() > 0) {
@@ -2251,11 +2254,16 @@ RGY_ERR TSReplace::restruct() {
                                     }
                                 }
                             }
-                            if (cutMode() && service != nullptr && tspkt->header.PID == service->aud0.stream.pid) {
+                            if (cutMode() && service != nullptr
+                                && tsrIsPESCutTargetPID(tspkt->header.PID,
+                                    service->aud0.stream.pid, service->aud1.stream.pid,
+                                    service->cap.stream.pid, service->pidSuperimpose)) {
                                 auto& state = m_pidCutState[tspkt->header.PID];
                                 if (tspkt->header.PayloadStartFlag) {
                                     state.seenPUSI = true;
-                                    state.keepPES = ret.pts == TIMESTAMP_INVALID_VALUE || !isCutTimestamp(ret.pts);
+                                    const auto referenceTimestamp = tsrPESCutReferenceTimestamp(ret.pts, curTimestamp);
+                                    state.keepPES = referenceTimestamp == TIMESTAMP_INVALID_VALUE
+                                        || !isCutTimestamp(referenceTimestamp);
                                     if (state.keepPES && ret.pts != TIMESTAMP_INVALID_VALUE) {
                                         auto *packet = tspkt->packet.data();
                                         if (!tsPacketRewritePESTimestamps(packet, tspkt->datasize(),

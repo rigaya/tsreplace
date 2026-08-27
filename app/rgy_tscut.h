@@ -22,6 +22,10 @@ bool tsPacketWritePCRBase(uint8_t *pkt188, int64_t pcrBase);
 int64_t tsPacketReadOPCRBase(const uint8_t *pkt188);
 bool tsPacketWriteOPCRBase(uint8_t *pkt188, int64_t opcrBase);
 bool tsPacketRewritePESTimestamps(uint8_t *pkt188, size_t size, int64_t pts, int64_t dts);
+// 対象サービス内で PES 単位のカットを行う PID かを判定する。
+bool tsrIsPESCutTargetPID(uint16_t packetPid, int aud0Pid, int aud1Pid, int captionPid, int superimposePid);
+// PES に PTS がなければ、直近の source clock をカット判定に使う。
+int64_t tsrPESCutReferenceTimestamp(int64_t pts, int64_t sourceClock);
 
 class TSRCutTimeline {
 public:

@@ -197,6 +197,19 @@ bool tsPacketRewritePESTimestamps(uint8_t *pkt188, size_t size, int64_t pts, int
     return true;
 }
 
+bool tsrIsPESCutTargetPID(uint16_t packetPid, int aud0Pid, int aud1Pid, int captionPid, int superimposePid) {
+    const auto matches = [packetPid](int targetPid) {
+        // PID 0 は未設定値や PAT、0x1fff は null packet なので PES カット対象にしない。
+        return targetPid > 0 && targetPid < 0x1fff && packetPid == targetPid;
+    };
+    return matches(aud0Pid) || matches(aud1Pid) || matches(captionPid) || matches(superimposePid);
+}
+
+int64_t tsrPESCutReferenceTimestamp(int64_t pts, int64_t sourceClock) {
+    // PTS を持たない PES は、その時点で直近に確定した source clock で判定する。
+    return pts != TIMESTAMP_INVALID_VALUE ? pts : sourceClock;
+}
+
 TSRCutTimeline::TSRCutTimeline() :
     m_ranges(),
     m_removedBeforeRange(),

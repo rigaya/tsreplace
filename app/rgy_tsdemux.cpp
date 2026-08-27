@@ -116,6 +116,7 @@ RGYTSDemuxer::RGYTSDemuxer() :
     m_audio1Mode(0),
     m_captionMode(0),
     m_superimposeMode(0),
+    m_parsePESTimestampAllStreams(false),
     m_log(),
     m_pat(),
     m_patPsi(),
@@ -703,10 +704,24 @@ std::tuple<RGY_ERR, RGYTSDemuxResult> RGYTSDemuxer::parse(const RGYTSPacket *pkt
                 result.pts = pes.pts;
                 result.dts = pes.dts;
             }
+        } else if (m_parsePESTimestampAllStreams && packetHeader.PID == service->service.aud1.stream.pid) {
+            if (packetHeader.PayloadStartFlag) {
+                auto pes = parsePESHeader(pkt->packet);
+                AddMessage(RGY_LOG_TRACE, _T("  pid aud1 0x%04x, %lld\n"), packetHeader.PID, pes.pts);
+                result.pts = pes.pts;
+                result.dts = pes.dts;
+            }
         } else if (packetHeader.PID == service->service.cap.stream.pid) {
             if (packetHeader.PayloadStartFlag) {
                 auto pes = parsePESHeader(pkt->packet);
                 AddMessage(RGY_LOG_TRACE, _T("  pid cap  0x%04x, %lld\n"), service->service.vid.stream.pid, pes.pts);
+                result.pts = pes.pts;
+                result.dts = pes.dts;
+            }
+        } else if (m_parsePESTimestampAllStreams && packetHeader.PID == service->service.pidSuperimpose) {
+            if (packetHeader.PayloadStartFlag) {
+                auto pes = parsePESHeader(pkt->packet);
+                AddMessage(RGY_LOG_TRACE, _T("  pid superimpose 0x%04x, %lld\n"), packetHeader.PID, pes.pts);
                 result.pts = pes.pts;
                 result.dts = pes.dts;
             }

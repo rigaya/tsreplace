@@ -344,6 +344,36 @@ void testPESRewrite() {
         "PTS が packet 末尾に収まらない PES を変更しない");
 }
 
+void testPESCutSelection() {
+    constexpr int AUD0_PID = 0x0112;
+    constexpr int AUD1_PID = 0x0113;
+    constexpr int CAPTION_PID = 0x0116;
+    constexpr int SUPERIMPOSE_PID = 0x0117;
+    expect(tsrIsPESCutTargetPID(AUD0_PID, AUD0_PID, AUD1_PID, CAPTION_PID, SUPERIMPOSE_PID),
+        "aud0 を PES カット対象にする");
+    expect(tsrIsPESCutTargetPID(AUD1_PID, AUD0_PID, AUD1_PID, CAPTION_PID, SUPERIMPOSE_PID),
+        "aud1 を PES カット対象にする");
+    expect(tsrIsPESCutTargetPID(CAPTION_PID, AUD0_PID, AUD1_PID, CAPTION_PID, SUPERIMPOSE_PID),
+        "caption を PES カット対象にする");
+    expect(tsrIsPESCutTargetPID(SUPERIMPOSE_PID, AUD0_PID, AUD1_PID, CAPTION_PID, SUPERIMPOSE_PID),
+        "superimpose を PES カット対象にする");
+    expect(!tsrIsPESCutTargetPID(0x0000, 0, AUD1_PID, CAPTION_PID, SUPERIMPOSE_PID),
+        "未設定 PID 0 と PAT を PES カット対象にしない");
+    expect(!tsrIsPESCutTargetPID(0x1fff, AUD0_PID, AUD1_PID, CAPTION_PID, 0x1fff),
+        "null PID を PES カット対象にしない");
+    expect(!tsrIsPESCutTargetPID(0x0100, AUD0_PID, AUD1_PID, CAPTION_PID, SUPERIMPOSE_PID),
+        "対象サービスの PES PID 以外をカット対象にしない");
+
+    constexpr int64_t PES_PTS = 123456;
+    constexpr int64_t SOURCE_CLOCK = 654321;
+    expect(tsrPESCutReferenceTimestamp(PES_PTS, SOURCE_CLOCK) == PES_PTS,
+        "PES に PTS があるときは PTS を判定時刻に使う");
+    expect(tsrPESCutReferenceTimestamp(TIMESTAMP_INVALID_VALUE, SOURCE_CLOCK) == SOURCE_CLOCK,
+        "PES に PTS がないときは直近 source clock を判定時刻に使う");
+    expect(tsrPESCutReferenceTimestamp(TIMESTAMP_INVALID_VALUE, TIMESTAMP_INVALID_VALUE) == TIMESTAMP_INVALID_VALUE,
+        "PTS と source clock がともに未確定なら判定時刻も未確定にする");
+}
+
 void testContinuityRewriter() {
     TSRContinuityRewriter rewriter;
 
@@ -416,6 +446,7 @@ int main() {
     testOriginPTS();
     testPCRReadWrite();
     testPESRewrite();
+    testPESCutSelection();
     testContinuityRewriter();
 
     if (failures != 0) {

@@ -126,6 +126,8 @@ public:
     virtual ~RGYTSDemuxer();
     RGY_ERR init(std::shared_ptr<RGYLog> log, int selectService);
     std::tuple<RGY_ERR, RGYTSDemuxResult> parse(const RGYTSPacket *pkt);
+    // legacy 動作を変えないよう、aud1 / superimpose の PES timestamp 解析は明示的に有効化する。
+    void setParsePESTimestampAllStreams(bool enable) { m_parsePESTimestampAllStreams = enable; }
 
     const RGYTS_PAT* pat() const { return m_pat.get(); }
     const int64_t pcr() const { return m_pcr; }
@@ -181,6 +183,7 @@ protected:
     int m_audio1Mode;
     int m_captionMode;
     int m_superimposeMode;
+    bool m_parsePESTimestampAllStreams;
 
     std::shared_ptr<RGYLog> m_log;
     std::unique_ptr<RGYTS_PAT> m_pat;
