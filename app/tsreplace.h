@@ -33,6 +33,7 @@
 #include <thread>
 #include <mutex>
 #include "rgy_tsdemux.h"
+#include "rgy_tscut.h"
 #include "rgy_avutil.h"
 #include "rgy_pipe.h"
 #include "rgy_queue.h"
@@ -199,6 +200,7 @@ struct TSRReplaceParams {
     tstring replacefileformat;
     tstring output;
     tstring logfile;
+    tstring cutList;
     TSRReplaceStartPoint startpoint;
     int64_t replaceDelay;
     bool endAtReplaceEOF;
@@ -253,6 +255,7 @@ protected:
     uint8_t getAudValue(const AVPacket *pkt) const;
     std::tuple<RGY_ERR, bool, bool> checkPacket(const AVPacket *pkt);
     int64_t getStartPointPTS() const;
+    bool cutMode() const { return m_cut.enabled(); }
 
     void AddMessage(RGYLogLevel log_level, const tstring &str) {
         if (m_log == nullptr || log_level < m_log->getLogLevel(RGY_LOGT_APP)) {
@@ -324,6 +327,7 @@ protected:
     bool m_removeNonTargetService; // 非対象serviceの削除
     int m_selectService; // 出力するserviceの番号
     bool m_copyFileTs; // ファイルのタイムスタンプをコピー
+    TSRCutTimeline m_cut; // CM カット用のタイムライン
     decltype(parse_nal_unit_h264_c) *m_parseNalH264; // H.264用のnal unit分解関数へのポインタ
 
     decltype(parse_nal_unit_hevc_c) *m_parseNalHevc; // HEVC用のnal unit分解関数へのポインタ

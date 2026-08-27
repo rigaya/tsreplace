@@ -230,6 +230,10 @@ int64_t TSRCutTimeline::originPTS() const {
     return m_originPTS;
 }
 
+size_t TSRCutTimeline::rangeCount() const {
+    return m_ranges.size();
+}
+
 int64_t TSRCutTimeline::totalRemoved() const {
     return m_totalRemoved;
 }

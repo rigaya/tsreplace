@@ -157,6 +157,7 @@ TSRReplaceParams::TSRReplaceParams() :
     replacefileformat(),
     output(),
     logfile(),
+    cutList(),
     startpoint(TSRReplaceStartPoint::KeyframPts),
     replaceDelay(0),
     endAtReplaceEOF(false),
@@ -1009,6 +1010,7 @@ TSReplace::TSReplace() :
     m_removeNonTargetService(true),
     m_selectService(0),
     m_copyFileTs(false),
+    m_cut(),
     m_parseNalH264(get_parse_nal_unit_h264_func()),
     m_parseNalHevc(get_parse_nal_unit_hevc_func()),
     m_encoder(),
@@ -1097,6 +1099,15 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_selectService = prms.selectService;
     m_removeNonTargetService = prms.removeNonTargetService;
     m_copyFileTs = prms.copyFileTs;
+
+    if (!prms.cutList.empty()) {
+        if (const auto err = m_cut.load(prms.cutList); err != RGY_ERR_NONE) {
+            AddMessage(RGY_LOG_ERROR, _T("cut list の読み込みに失敗: %s\n"), m_cut.loadError().c_str());
+            return err;
+        }
+        AddMessage(RGY_LOG_INFO, _T("Loaded %d cut ranges, total cut: %.3f sec\n"),
+            (int)m_cut.rangeCount(), m_cut.totalRemoved() / (double)TS_TIMEBASE);
+    }
 
     // 置換映像EOF終了関連
     m_endAtReplaceEOF    = prms.endAtReplaceEOF;
@@ -1819,6 +1830,15 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     AddMessage(RGY_LOG_INFO, _T("%s First key    PTS: %11lld [%+7.1f ms] [%+7.1f ms]\n"),
         (m_startPoint == TSRReplaceStartPoint::KeyframPts) ? _T("*") : _T(" "),
         m_vidFirstKeyPTS, (m_vidFirstKeyPTS - m_vidFirstPacketPTS) * 1000.0 / (double)TS_TIMEBASE, (m_vidFirstKeyPTS - m_vidFirstFramePTS) * 1000.0 / (double)TS_TIMEBASE);
+    if (cutMode()) {
+        const auto diff = diffTimestampTsAMinusB(m_cut.originPTS(), m_vidFirstFramePTS);
+        AddMessage(RGY_LOG_INFO, _T("  Cut origin   PTS: %11lld [%+7.1f ms]\n"),
+            (long long)m_cut.originPTS(), diff * 1000.0 / (double)TS_TIMEBASE);
+        if (diff != 0) {
+            AddMessage(RGY_LOG_WARN, _T("cut list の origin_pts (%lld) が映像先頭フレーム PTS (%lld) と一致しない (差 %+.1f ms)\n"),
+                (long long)m_cut.originPTS(), (long long)m_vidFirstFramePTS, diff * 1000.0 / (double)TS_TIMEBASE);
+        }
+    }
     if (m_replaceDelay > 0) {
         AddMessage(RGY_LOG_INFO, _T("  Output start PTS: %11lld (delay %lld [%+7.1f ms])\n"), (long long)m_outputStartTimestamp, (long long)m_replaceDelay, m_replaceDelay * 1000.0 / (double)TS_TIMEBASE);
     }
@@ -2239,6 +2259,7 @@ static void show_help() {
         _T("                                 keyframe, firstframe, firstpacket\n")
         _T("   --replace-delay <int>        cut packets until (first timestamp + delay)\n")
         _T("   --end-at-replace-eof [<int>] stop output around replace EOF (+margin ms)\n")
+        _T("   --cut-list <filename>        set cm cut list file\n")
 
         _T("   --(no-)add-aud               auto insert aud unit\n")
         _T("   --(no-)add-headers           auto insert headers\n")
@@ -2376,6 +2397,11 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
     if (IS_OPTION("replace-format")) {
         i++;
         prm.replacefileformat = strInput[i];
+        return 0;
+    }
+    if (IS_OPTION("cut-list")) {
+        i++;
+        prm.cutList = strInput[i];
         return 0;
     }
     if (IS_OPTION("start-point")) {

@@ -84,13 +84,15 @@ void testNormalization() {
         TestFile file("overlap", manifest("cut 100 150\ncut 120 180\n"));
         TSRCutTimeline timeline;
         expect(timeline.load(file.path()) == RGY_ERR_NONE, "overlap cut をロードできる");
-        expect(timeline.totalRemoved() == 80 && timeline.isCut(160), "overlap cut を統合する");
+        expect(timeline.rangeCount() == 1 && timeline.totalRemoved() == 80 && timeline.isCut(160),
+            "overlap cut を 1 区間に統合する");
     }
     {
         TestFile file("adjacent", manifest("cut 100 130\ncut 130 160\n"));
         TSRCutTimeline timeline;
         expect(timeline.load(file.path()) == RGY_ERR_NONE, "隣接 cut をロードできる");
-        expect(timeline.totalRemoved() == 60 && timeline.isCut(130), "隣接 cut を統合する");
+        expect(timeline.rangeCount() == 1 && timeline.totalRemoved() == 60 && timeline.isCut(130),
+            "隣接 cut を 1 区間に統合する");
     }
     {
         TestFile file("unsorted", manifest("cut 200 250\ncut 100 130\n"));

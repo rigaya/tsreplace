@@ -24,6 +24,7 @@ public:
     const tstring& loadError() const;
     bool enabled() const;
     int64_t originPTS() const;
+    size_t rangeCount() const;
     int64_t totalRemoved() const;
 
     bool isCut(int64_t t) const;
