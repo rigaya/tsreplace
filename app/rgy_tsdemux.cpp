@@ -416,8 +416,10 @@ RGYTSPESHeader RGYTSDemuxer::parsePESHeader(const std::vector<uint8_t>& pkt) {
     pes.pts = TIMESTAMP_INVALID_VALUE;
     pes.dts = TIMESTAMP_INVALID_VALUE;
     static uint8_t PES_START_CODE[3] = { 0x00, 0x00, 0x01 };
+    const uint8_t *const pkt_fin = pkt.data() + pkt.size();
     const uint8_t *pes_header = nullptr;
-    for (int i = 4; i < (int)pkt.size(); i++) {
+    // start codeの3byteがパケット内に収まる範囲まで探索する (i < pkt.size() では最大2byte範囲外を読んでしまう)
+    for (int i = 4; i + (int)sizeof(PES_START_CODE) <= (int)pkt.size(); i++) {
         if (memcmp(pkt.data() + i, PES_START_CODE, sizeof(PES_START_CODE)) == 0) {
             pes_header = pkt.data() + i;
             break;
@@ -426,10 +428,14 @@ RGYTSPESHeader RGYTSDemuxer::parsePESHeader(const std::vector<uint8_t>& pkt) {
     if (!pes_header) {
         return pes;
     }
+    // 以降、pes_headerがパケット末尾付近で見つかった場合に範囲外参照しないよう、都度残りサイズを確認する
     const uint8_t *ptr = pes_header;
+    if (pkt_fin - ptr < PES_START_SIZE) {
+        return pes;
+    }
     pes.stream_id = ptr[3];
     pes.pes_len = read16(ptr + 4);
-    if ((ptr[6] & 0xC0) == (0x80)) {
+    if (pkt_fin - ptr >= PES_HEADER_SIZE && (ptr[6] & 0xC0) == (0x80)) {
         pes.scramble                  = (ptr[6] & 0x30) >> 8;
         pes.priority                  = (ptr[6] & 0x08) != 0;
         pes.data_align                = (ptr[6] & 0x04) != 0;
@@ -446,22 +452,31 @@ RGYTSPESHeader RGYTSDemuxer::parsePESHeader(const std::vector<uint8_t>& pkt) {
         pes.pes_header_len            =  ptr[8];
         ptr += 9;
         if (pes.pts_flag) {
+            if (pkt_fin - ptr < 5) { // PTSがパケット内に収まっていない
+                return pes;
+            }
             pes.pts = parsePESPTS(ptr);
             ptr += 5;
         }
         if (pes.dts_flag) {
+            if (pkt_fin - ptr < 5) { // DTSがパケット内に収まっていない
+                return pes;
+            }
             pes.dts = parsePESPTS(ptr);
             ptr += 5;
         } else {
             pes.dts = pes.pts;
         }
         if (pes.ext_flag) {
+            if (pkt_fin - ptr < 1) {
+                return pes;
+            }
             auto pes_ext = *ptr++;
             int skip = (pes_ext >> 4) & 0x0B;
             skip += skip & 0x09;
             ptr += skip;
             if ((pes_ext & 0x41) == 0x01 &&
-                (ptr + 2) <= (pes_header + pes.pes_header_len + PES_HEADER_SIZE)) {
+                (ptr + 2) <= (std::min)(pes_header + pes.pes_header_len + PES_HEADER_SIZE, pkt_fin)) {
                 /* PES extension 2 */
                 if ((ptr[0] & 0x7f) > 0 && (ptr[1] & 0x80) == 0) {
                     pes.extended_stream_id = ptr[1];
