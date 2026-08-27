@@ -140,6 +140,30 @@ void testOriginPTS() {
     expect(timeline.originPTS() == 8589934000LL, "33bit 上限付近の origin_pts を保持する");
 }
 
+void testTextEncoding() {
+    {
+        TestFile file("utf8_bom", std::string("\xef\xbb\xbf") + manifest("cut 100 130\n"));
+        TSRCutTimeline timeline;
+        expect(timeline.load(file.path()) == RGY_ERR_NONE, "UTF-8 BOM 付きカットリストをロードできる");
+        expect(timeline.rangeCount() == 1 && timeline.isCut(100), "UTF-8 BOM 付きでも cut を保持する");
+    }
+    {
+        const auto lfText = manifest("cut 100 130\n");
+        std::string crlfText;
+        crlfText.reserve(lfText.size() + 8);
+        for (const auto c : lfText) {
+            if (c == '\n') {
+                crlfText.push_back('\r');
+            }
+            crlfText.push_back(c);
+        }
+        TestFile file("crlf", crlfText);
+        TSRCutTimeline timeline;
+        expect(timeline.load(file.path()) == RGY_ERR_NONE, "CRLF のカットリストをロードできる");
+        expect(timeline.rangeCount() == 1 && timeline.isCut(100), "CRLF でも cut を保持する");
+    }
+}
+
 std::array<uint8_t, 188> makeTSPacket(uint16_t pid, uint8_t adaptationFieldControl, uint8_t cc,
     uint8_t scrambling = 0) {
     std::array<uint8_t, 188> packet = {};
@@ -444,6 +468,7 @@ int main() {
     testNormalization();
     testErrors();
     testOriginPTS();
+    testTextEncoding();
     testPCRReadWrite();
     testPESRewrite();
     testPESCutSelection();

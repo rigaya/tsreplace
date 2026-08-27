@@ -249,6 +249,11 @@ RGY_ERR TSRCutTimeline::load(const tstring& filename) {
     size_t lineNumber = 0;
     while (std::getline(input, line)) {
         lineNumber++;
+        if (lineNumber == 1 && line.size() >= 3
+            && (uint8_t)line[0] == 0xef && (uint8_t)line[1] == 0xbb && (uint8_t)line[2] == 0xbf) {
+            // Windows などで生成された UTF-8 テキストの BOM は先頭行でのみ読み飛ばす。
+            line.erase(0, 3);
+        }
         const auto text = trim(line);
 
         if (lineNumber == 1) {
