@@ -316,14 +316,14 @@ protected:
     bool m_preAnalysisFin; // 事前解析の終了
     uint16_t m_vidPIDReplace;   // 出力tsの動画のPID上書き用
     uint16_t m_pcrPIDReplace;   // 出力tsのPCRのPID上書き用
-    int64_t m_vidDTSOutMax;     // 元TS時間軸の動画フレームDTS最大値(出力制御用)
+    int64_t m_vidDTSOutMax;     // 出力時間軸の動画フレームDTS最大値(出力制御用)
     int64_t m_vidPTS;           // 直前の動画フレームのPTS
-    int64_t m_vidDTS;           // 直前の動画フレームのDTS (元TS時間軸)
+    int64_t m_vidDTS;           // 直前の動画フレームのDTS (出力時間軸)
     int64_t m_vidFirstFramePTS; // 最初の動画フレームのPTS
     int64_t m_vidFirstFrameDTS; // 最初の動画フレームのDTS
     int64_t m_vidFirstKeyPTS;   // 最初の動画キーフレームのPTS
     TSRReplaceStartPoint m_startPoint; // 起点モード
-    int64_t m_vidFirstTimestamp;       // 起点のtimestamp (元TS時間軸)
+    int64_t m_vidFirstTimestamp;       // 起点のtimestamp (出力時間軸)
     int64_t m_vidFirstPacketPTS;       // 最初のパケットのPTS
     std::vector<uint8_t> m_lastPat; // 直前の出力PATデータ
     std::vector<uint8_t> m_lastPmt; // 直前の出力PMTデータ
@@ -359,7 +359,6 @@ protected:
     int     m_eofCutDelayMs;         // EOF からの余裕時間(ms)
     int64_t m_outputEndTimestamp;    // 出力終了点 (90kHz単位)
     int64_t m_lastReplaceVidPTS;     // 最後に出力した置換映像のPTS
-    bool    m_warnedReplaceVideoInCut; // 置換映像が cut 区間内へ食い込んだ WARNING を出力済みか
 };
 
 #endif //__TSREPLACE_H__

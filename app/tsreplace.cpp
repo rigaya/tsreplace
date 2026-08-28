@@ -1025,8 +1025,7 @@ TSReplace::TSReplace() :
     m_endAtReplaceEOF(false),
     m_eofCutDelayMs(100),
     m_outputEndTimestamp(TIMESTAMP_INVALID_VALUE),
-    m_lastReplaceVidPTS(TIMESTAMP_INVALID_VALUE),
-    m_warnedReplaceVideoInCut(false) {
+    m_lastReplaceVidPTS(TIMESTAMP_INVALID_VALUE) {
 
 }
 TSReplace::~TSReplace() {
@@ -1128,7 +1127,6 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_eofCutDelayMs      = prms.eofCutDelayMs;
     m_outputEndTimestamp = TIMESTAMP_INVALID_VALUE;
     m_lastReplaceVidPTS  = TIMESTAMP_INVALID_VALUE;
-    m_warnedReplaceVideoInCut = false;
 
     AddMessage(RGY_LOG_INFO, _T("Output  file: \"%s\".\n"), prms.output.c_str());
     AddMessage(RGY_LOG_INFO, _T("Input   file: \"%s\".\n"), prms.input.c_str());
@@ -1619,18 +1617,6 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const auto vidPID = m_vidPIDReplace;
     const bool addDts = (avpkt->pts != avpkt->dts);
     const bool isKey = (avpkt->flags & AV_PKT_FLAG_KEY) != 0;
-    // Amatsukaze の置換映像はカット済みでもtimecodeが元TS時間軸を保つため、
-    // schedulerでは元TS軸のまま扱い、PESへ書く直前だけ出力時間軸へ変換する。
-    const auto sourcePTS = av_rescale_q(avpkt->pts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
-    const auto sourceDTS = av_rescale_q(avpkt->dts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
-    // timecode のms丸めで境界フレームがcut区間へ数十tick入る場合がある。
-    // mapToOutput() はcut区間内を区間開始点へクランプするため、破棄せず直前のkeep区間直後へ繋ぐ。
-    if (isCutTimestamp(sourcePTS)) {
-        if (!m_warnedReplaceVideoInCut) {
-            AddMessage(RGY_LOG_WARN, _T("置換映像フレームが cut 区間内にあるため、直前の keep 区間の直後へ寄せます (PTS %lld)\n"), (long long)sourcePTS);
-            m_warnedReplaceVideoInCut = true;
-        }
-    }
     const auto [err, has_aud, has_header] = checkPacket(avpkt);
     if (err != RGY_ERR_NONE) {
         return err;
@@ -1638,8 +1624,9 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const bool replaceToHEVC = m_videoReplace->getVidCodecID() == AV_CODEC_ID_HEVC;
     const bool addAud = m_addAud && !has_aud;
     const bool addHeader = m_addHeaders && isKey && !has_header;
-    const auto pts = mapToOutput(sourcePTS);
-    const auto dts = mapToOutput(sourceDTS);
+    // 置換映像のtimecodeはカット済みの出力時間軸なので、mapToOutput()を適用すると二重にカットされる。
+    const auto pts = av_rescale_q(avpkt->pts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
+    const auto dts = av_rescale_q(avpkt->dts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
 
     // 最後に出力した置換映像のPTSを記録 (EOF時の終了しきい値計算用)
     m_lastReplaceVidPTS = pts;
@@ -1731,7 +1718,6 @@ int64_t TSReplace::getOrigPtsOffset() {
             m_vidDTSOutMax = m_vidDTS;
         }
     }
-    // 置換映像のtimecodeと同じ元TS時間軸で比較する。出力時間軸への変換はPES生成時に行う。
     // dtsベースで差分を計算するが、起点は最初のPTSとする
     auto offset = m_vidDTSOutMax + m_ptswrapOffset - m_vidFirstTimestamp;
     return offset;
@@ -1796,8 +1782,8 @@ int64_t TSReplace::getReplaceVideoOriginPTS() const {
     if (!cutMode()) {
         return getStartPointPTS();
     }
-    // cut-list が置換映像の座標系を定義するため、cut モードでは origin_pts を原点にする。
-    // start-point を原点にすると両者の差だけカット境界がずれ、境界フレームが欠落する。
+    // cut-list が座標系を定義するため、cut モードでは元TS時間軸の origin_pts + replace-delay を原点にする。
+    // 呼び出し側で出力時間軸へ変換する。start-point 基準では境界がずれてフレームが欠落する。
     return (m_cut.originPTS() + m_replaceDelay) & ((int64_t{ 1 } << 33) - 1);
 }
 
@@ -2184,7 +2170,7 @@ RGY_ERR TSReplace::restruct() {
                     writeReplacedPMT(*pmtResult);
                     pmtResult.reset();
                     if (m_startPoint == TSRReplaceStartPoint::FirstPacket) {
-                        m_vidDTSOutMax = m_vidFirstTimestamp = getReplaceVideoOriginPTS();
+                        m_vidDTSOutMax = m_vidFirstTimestamp = mapToOutput(getReplaceVideoOriginPTS());
                         if (auto err2 = writeReplacedVideo(); (err2 != RGY_ERR_NONE && err2 != RGY_ERR_MORE_DATA)) {
                             return err2;
                         }
@@ -2242,7 +2228,7 @@ RGY_ERR TSReplace::restruct() {
                         }
                         if (tspkt->header.PayloadStartFlag) {
                             m_vidPTS = mapToOutput(ret.pts);
-                            m_vidDTS = ret.dts;
+                            m_vidDTS = mapToOutput(ret.dts);
                             if (m_vidFirstFramePTS == TIMESTAMP_INVALID_VALUE) {
                                 m_vidFirstFramePTS = ret.pts;
                                 //AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstFramePTS);
@@ -2254,7 +2240,7 @@ RGY_ERR TSReplace::restruct() {
                             if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
                                 const auto startPoint = getStartPointPTS();
                                 if (startPoint <= ret.pts) {
-                                    m_vidDTSOutMax = m_vidFirstTimestamp = getReplaceVideoOriginPTS();
+                                    m_vidDTSOutMax = m_vidFirstTimestamp = mapToOutput(getReplaceVideoOriginPTS());
                                 }
                             }
                         }
