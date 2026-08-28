@@ -204,6 +204,7 @@ struct TSRReplaceParams {
     tstring cutList;
     TSRReplaceStartPoint startpoint;
     int64_t replaceDelay;
+    int64_t replaceFirstPTS;
     bool endAtReplaceEOF;
     int eofCutDelayMs;
     tstring encoderPath;
@@ -352,6 +353,7 @@ protected:
 
     // 置換遅延関連
     int64_t m_replaceDelay;          // --replace-delay で指定された遅延量(90kHz単位)
+    int64_t m_replaceFirstPTS;       // 置換映像の先頭フレームに対応する元TSの絶対PTS
     int64_t m_outputStartTimestamp;  // 出力開始点 = m_firstTimestamp + m_replaceDelay
 
     // 置換映像EOF終了関連

@@ -5,6 +5,7 @@
 #include "rgy_tscut.h"
 
 #include <algorithm>
+#include <cassert>
 #include <charconv>
 #include <cstring>
 #include <filesystem>
@@ -49,6 +50,27 @@ tstring cutRangeError(size_t lineNumber, const TCHAR *reason, const TSRCutRange&
     std::basic_ostringstream<TCHAR> stream;
     stream << reason << _T(" (") << range.start << _T(", ") << range.end << _T(")");
     return lineError(lineNumber, stream.str());
+}
+
+tstring resolvedCutRangeError(size_t lineNumber, const TCHAR *reason,
+    const TSRCutRange& absolute, const TSRCutRange& relative) {
+    std::basic_ostringstream<TCHAR> stream;
+    stream << reason
+        << _T(" (絶対 PTS: ") << absolute.start << _T(", ") << absolute.end
+        << _T(" / 相対値: ") << relative.start << _T(", ") << relative.end << _T(")");
+    return lineError(lineNumber, stream.str());
+}
+
+int64_t diffTimestamp33AMinusB(int64_t a, int64_t b) {
+    constexpr int64_t WRAP = int64_t{ 1 } << 33;
+    constexpr int64_t WRAP_THRESHOLD = (int64_t{ 1 } << 32) - 1;
+    auto diff = a - b;
+    if (diff > WRAP_THRESHOLD) {
+        diff -= WRAP;
+    } else if (diff < -WRAP_THRESHOLD) {
+        diff += WRAP;
+    }
+    return diff;
 }
 
 } // namespace
@@ -213,9 +235,11 @@ int64_t tsrPESCutReferenceTimestamp(int64_t pts, int64_t sourceClock) {
 TSRCutTimeline::TSRCutTimeline() :
     m_ranges(),
     m_removedBeforeRange(),
+    m_absoluteRanges(),
+    m_absoluteRangeLines(),
     m_loadError(),
     m_loaded(false),
-    m_originPTS(0),
+    m_resolved(false),
     m_totalRemoved(0),
     m_cachedRange(0) {
 }
@@ -223,9 +247,11 @@ TSRCutTimeline::TSRCutTimeline() :
 void TSRCutTimeline::clear() {
     m_ranges.clear();
     m_removedBeforeRange.clear();
+    m_absoluteRanges.clear();
+    m_absoluteRangeLines.clear();
     m_loadError.clear();
     m_loaded = false;
-    m_originPTS = 0;
+    m_resolved = false;
     m_totalRemoved = 0;
     m_cachedRange = 0;
 }
@@ -240,10 +266,8 @@ RGY_ERR TSRCutTimeline::load(const tstring& filename) {
     }
 
     bool hasTimebase = false;
-    bool hasOrigin = false;
-    bool hasOriginPTS = false;
-    int64_t originPTS = 0;
     std::vector<TSRCutRange> ranges;
+    std::vector<size_t> rangeLines;
 
     std::string line;
     size_t lineNumber = 0;
@@ -257,8 +281,12 @@ RGY_ERR TSRCutTimeline::load(const tstring& filename) {
         const auto text = trim(line);
 
         if (lineNumber == 1) {
-            if (text != "# tsreplace-cut-v1") {
-                m_loadError = _T("1行目が識別行 \"# tsreplace-cut-v1\" ではない");
+            if (text == "# tsreplace-cut-v1") {
+                m_loadError = _T("v1 形式は廃止されたため、\"# tsreplace-cut-v2\" 形式を使用する");
+                return RGY_ERR_INVALID_FORMAT;
+            }
+            if (text != "# tsreplace-cut-v2") {
+                m_loadError = _T("1行目が識別行 \"# tsreplace-cut-v2\" ではない");
                 return RGY_ERR_INVALID_FORMAT;
             }
             continue;
@@ -281,15 +309,13 @@ RGY_ERR TSRCutTimeline::load(const tstring& filename) {
                 m_loadError = lineError(lineNumber, _T("cut の start / end が整数ではない"));
                 return RGY_ERR_INVALID_FORMAT;
             }
-            if (range.start < 0 || range.end < 0) {
-                m_loadError = cutRangeError(lineNumber, _T("cut の start / end が負値"), range);
-                return RGY_ERR_INVALID_PARAM;
-            }
-            if (range.start >= range.end) {
-                m_loadError = cutRangeError(lineNumber, _T("cut の start >= end"), range);
+            if (range.start < 0 || range.end < 0
+                || range.start >= (int64_t{ 1 } << 33) || range.end >= (int64_t{ 1 } << 33)) {
+                m_loadError = cutRangeError(lineNumber, _T("cut の start / end が 33bit の範囲外"), range);
                 return RGY_ERR_INVALID_PARAM;
             }
             ranges.push_back(range);
+            rangeLines.push_back(lineNumber);
             continue;
         }
 
@@ -315,30 +341,9 @@ RGY_ERR TSRCutTimeline::load(const tstring& filename) {
                 return RGY_ERR_INVALID_PARAM;
             }
             hasTimebase = true;
-        } else if (key == "origin") {
-            if (hasOrigin) {
-                m_loadError = lineError(lineNumber, _T("origin が重複している"));
-                return RGY_ERR_INVALID_PARAM;
-            }
-            if (value != "first-frame") {
-                m_loadError = lineError(lineNumber, _T("origin は \"first-frame\" でなければならない"));
-                return RGY_ERR_INVALID_PARAM;
-            }
-            hasOrigin = true;
-        } else if (key == "origin_pts") {
-            if (hasOriginPTS) {
-                m_loadError = lineError(lineNumber, _T("origin_pts が重複している"));
-                return RGY_ERR_INVALID_PARAM;
-            }
-            if (!parseInt64(value, originPTS)) {
-                m_loadError = lineError(lineNumber, _T("origin_pts が整数ではない"));
-                return RGY_ERR_INVALID_PARAM;
-            }
-            if (originPTS < 0 || originPTS >= (int64_t{ 1 } << 33)) {
-                m_loadError = lineError(lineNumber, _T("origin_pts が 33bit の範囲外"));
-                return RGY_ERR_INVALID_PARAM;
-            }
-            hasOriginPTS = true;
+        } else if (key == "origin" || key == "origin_pts") {
+            m_loadError = lineError(lineNumber, _T("v1 形式は廃止されたため、origin / origin_pts は指定できない"));
+            return RGY_ERR_INVALID_FORMAT;
         } else {
             m_loadError = lineError(lineNumber, _T("不明なキー \"") + toTString(key) + _T("\""));
             return RGY_ERR_INVALID_FORMAT;
@@ -348,9 +353,52 @@ RGY_ERR TSRCutTimeline::load(const tstring& filename) {
         m_loadError = _T("カットリストの読み込み中にエラーが発生した");
         return RGY_ERR_UNKNOWN;
     }
-    if (!hasTimebase || !hasOrigin || !hasOriginPTS) {
-        m_loadError = _T("timebase / origin / origin_pts のいずれかが欠落している");
+    if (!hasTimebase) {
+        m_loadError = _T("timebase が欠落している");
         return RGY_ERR_INVALID_FORMAT;
+    }
+
+    m_absoluteRanges = std::move(ranges);
+    m_absoluteRangeLines = std::move(rangeLines);
+    m_loaded = true;
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR TSRCutTimeline::resolve(int64_t refPTS) {
+    if (!m_loaded) {
+        m_loadError = _T("カットリストがロードされていない");
+        return RGY_ERR_INVALID_CALL;
+    }
+    if (m_resolved) {
+        m_loadError = _T("cut 範囲は既に解決済みのため、resolve() を再実行できない");
+        return RGY_ERR_INVALID_CALL;
+    }
+    m_ranges.clear();
+    m_removedBeforeRange.clear();
+    m_loadError.clear();
+    m_resolved = false;
+    m_totalRemoved = 0;
+    m_cachedRange = 0;
+
+    if (refPTS < 0 || refPTS >= (int64_t{ 1 } << 33)) {
+        m_loadError = _T("cut 範囲の解決基準 PTS が 33bit の範囲外");
+        return RGY_ERR_INVALID_PARAM;
+    }
+
+    std::vector<TSRCutRange> ranges;
+    ranges.reserve(m_absoluteRanges.size());
+    for (size_t i = 0; i < m_absoluteRanges.size(); i++) {
+        const auto& absolute = m_absoluteRanges[i];
+        const TSRCutRange relative = {
+            diffTimestamp33AMinusB(absolute.start, refPTS),
+            diffTimestamp33AMinusB(absolute.end, refPTS)
+        };
+        if (relative.start >= relative.end) {
+            m_loadError = resolvedCutRangeError(m_absoluteRangeLines[i],
+                _T("基準 PTS から解決した cut の start >= end"), absolute, relative);
+            return RGY_ERR_INVALID_PARAM;
+        }
+        ranges.push_back(relative);
     }
 
     std::sort(ranges.begin(), ranges.end(), [](const TSRCutRange& lhs, const TSRCutRange& rhs) {
@@ -377,8 +425,7 @@ RGY_ERR TSRCutTimeline::load(const tstring& filename) {
 
     m_ranges = std::move(merged);
     m_removedBeforeRange = std::move(removedBeforeRange);
-    m_loaded = true;
-    m_originPTS = originPTS;
+    m_resolved = true;
     m_totalRemoved = totalRemoved;
     m_cachedRange = 0;
     return RGY_ERR_NONE;
@@ -392,19 +439,18 @@ bool TSRCutTimeline::enabled() const {
     return m_loaded;
 }
 
-int64_t TSRCutTimeline::originPTS() const {
-    return m_originPTS;
-}
-
 size_t TSRCutTimeline::rangeCount() const {
+    assert(m_resolved);
     return m_ranges.size();
 }
 
 const std::vector<TSRCutRange>& TSRCutTimeline::ranges() const {
+    assert(m_resolved);
     return m_ranges;
 }
 
 int64_t TSRCutTimeline::totalRemoved() const {
+    assert(m_resolved);
     return m_totalRemoved;
 }
 
@@ -425,6 +471,7 @@ size_t TSRCutTimeline::findRange(int64_t t) const {
 }
 
 bool TSRCutTimeline::isCut(int64_t t) const {
+    assert(m_resolved);
     if (m_ranges.empty()) {
         return false;
     }
@@ -433,6 +480,7 @@ bool TSRCutTimeline::isCut(int64_t t) const {
 }
 
 int64_t TSRCutTimeline::removedBefore(int64_t t) const {
+    assert(m_resolved);
     if (m_ranges.empty() || t <= m_ranges.front().start) {
         return 0;
     }

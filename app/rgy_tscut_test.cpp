@@ -45,17 +45,20 @@ void expect(bool condition, const char *message) {
     }
 }
 
-std::string manifest(const std::string& cuts = {}, const std::string& originPTS = "1234567890") {
-    return "# tsreplace-cut-v1\n"
-        "timebase=90000\n"
-        "origin=first-frame\n"
-        "origin_pts=" + originPTS + "\n\n" + cuts;
+std::string manifest(const std::string& cuts = {}) {
+    return "# tsreplace-cut-v2\n"
+        "timebase=90000\n\n" + cuts;
+}
+
+void expectLoadAndResolve(TSRCutTimeline& timeline, const TestFile& file, int64_t refPTS = 0) {
+    expect(timeline.load(file.path()) == RGY_ERR_NONE, "カットリストをロードできる");
+    expect(timeline.resolve(refPTS) == RGY_ERR_NONE, "カットリストを解決できる");
 }
 
 void testEmpty() {
     TestFile file("empty", manifest());
     TSRCutTimeline timeline;
-    expect(timeline.load(file.path()) == RGY_ERR_NONE, "cut なしをロードできる");
+    expectLoadAndResolve(timeline, file);
     expect(timeline.enabled(), "cut 0 個でもロード成功なら有効になる");
     expect(timeline.totalRemoved() == 0, "cut なしの削除時間は 0");
     expect(!timeline.isCut(100), "cut なしでは isCut が false");
@@ -65,7 +68,7 @@ void testEmpty() {
 void testSingleRange() {
     TestFile file("single", manifest("cut 100 130\n"));
     TSRCutTimeline timeline;
-    expect(timeline.load(file.path()) == RGY_ERR_NONE, "cut 1 個をロードできる");
+    expectLoadAndResolve(timeline, file);
     expect(timeline.enabled(), "cut ありでは有効になる");
     expect(!timeline.isCut(90) && timeline.removedBefore(90) == 0, "開始前");
     expect(timeline.isCut(100) && timeline.removedBefore(100) == 0, "開始境界");
@@ -77,7 +80,7 @@ void testSingleRange() {
 void testMultipleRanges() {
     TestFile file("multiple", manifest("cut 100 130\ncut 200 250\n"));
     TSRCutTimeline timeline;
-    expect(timeline.load(file.path()) == RGY_ERR_NONE, "cut 複数をロードできる");
+    expectLoadAndResolve(timeline, file);
     expect(timeline.removedBefore(220) == 50, "複数 cut の区間内累積");
     expect(timeline.removedBefore(300) == 80, "複数 cut の累積");
     expect(timeline.removedBefore(110) == 10, "逆順アクセスでも正しく検索できる");
@@ -87,21 +90,21 @@ void testNormalization() {
     {
         TestFile file("overlap", manifest("cut 100 150\ncut 120 180\n"));
         TSRCutTimeline timeline;
-        expect(timeline.load(file.path()) == RGY_ERR_NONE, "overlap cut をロードできる");
+        expectLoadAndResolve(timeline, file);
         expect(timeline.rangeCount() == 1 && timeline.totalRemoved() == 80 && timeline.isCut(160),
             "overlap cut を 1 区間に統合する");
     }
     {
         TestFile file("adjacent", manifest("cut 100 130\ncut 130 160\n"));
         TSRCutTimeline timeline;
-        expect(timeline.load(file.path()) == RGY_ERR_NONE, "隣接 cut をロードできる");
+        expectLoadAndResolve(timeline, file);
         expect(timeline.rangeCount() == 1 && timeline.totalRemoved() == 60 && timeline.isCut(130),
             "隣接 cut を 1 区間に統合する");
     }
     {
         TestFile file("unsorted", manifest("cut 200 250\ncut 100 130\n"));
         TSRCutTimeline timeline;
-        expect(timeline.load(file.path()) == RGY_ERR_NONE, "順不同 cut をロードできる");
+        expectLoadAndResolve(timeline, file);
         expect(timeline.removedBefore(150) == 30 && timeline.removedBefore(300) == 80,
             "順不同 cut を並べ替える");
     }
@@ -116,35 +119,60 @@ void expectLoadError(const std::string& name, const std::string& content) {
 }
 
 void testErrors() {
-    expectLoadError("start == end", manifest("cut 100 100\n"));
-    expectLoadError("start > end", manifest("cut 130 100\n"));
     expectLoadError("負値", manifest("cut -1 100\n"));
+    expectLoadError("33bit 範囲外", manifest("cut 100 8589934592\n"));
     expectLoadError("timebase 不正",
-        "# tsreplace-cut-v1\ntimebase=1000\norigin=first-frame\norigin_pts=1\n");
-    expectLoadError("origin 不正",
-        "# tsreplace-cut-v1\ntimebase=90000\norigin=unknown\norigin_pts=1\n");
+        "# tsreplace-cut-v2\ntimebase=1000\n");
     expectLoadError("timebase 欠落",
-        "# tsreplace-cut-v1\norigin=first-frame\norigin_pts=1\n");
-    expectLoadError("origin 欠落",
-        "# tsreplace-cut-v1\ntimebase=90000\norigin_pts=1\n");
-    expectLoadError("origin_pts 欠落",
-        "# tsreplace-cut-v1\ntimebase=90000\norigin=first-frame\n");
+        "# tsreplace-cut-v2\n");
+    expectLoadError("origin 廃止",
+        "# tsreplace-cut-v2\ntimebase=90000\norigin=first-frame\n");
+    expectLoadError("origin_pts 廃止",
+        "# tsreplace-cut-v2\ntimebase=90000\norigin_pts=1\n");
+    expectLoadError("v1 廃止",
+        "# tsreplace-cut-v1\ntimebase=90000\norigin=first-frame\norigin_pts=1\n");
     expectLoadError("識別行なし",
-        "timebase=90000\norigin=first-frame\norigin_pts=1\n");
+        "timebase=90000\n");
+
+    for (const auto& test : { std::make_pair("start == end", manifest("cut 100 100\n")),
+                              std::make_pair("start > end", manifest("cut 130 100\n")) }) {
+        TestFile file(test.first, test.second);
+        TSRCutTimeline timeline;
+        expect(timeline.load(file.path()) == RGY_ERR_NONE, "start/end の順序は load 時には確定しない");
+        expect(timeline.resolve(0) != RGY_ERR_NONE, test.first);
+        expect(!timeline.loadError().empty(), "resolve 失敗時にエラー理由を保持する");
+        expect(timeline.loadError().find(_T("絶対 PTS")) != tstring::npos
+            && timeline.loadError().find(_T("相対値")) != tstring::npos,
+            "resolve 失敗理由に絶対 PTS と相対値を含める");
+    }
 }
 
-void testOriginPTS() {
-    TestFile file("origin_wrap", manifest({}, "8589934000"));
+void testResolve() {
+    TestFile file("resolve", manifest("cut 1100 1130\n"));
     TSRCutTimeline timeline;
-    expect(timeline.load(file.path()) == RGY_ERR_NONE, "33bit 上限付近の origin_pts をロードできる");
-    expect(timeline.originPTS() == 8589934000LL, "33bit 上限付近の origin_pts を保持する");
+    expectLoadAndResolve(timeline, file, 1000);
+    expect(timeline.rangeCount() == 1, "resolve 後に cut を保持する");
+    expect(timeline.ranges()[0].start == 100 && timeline.ranges()[0].end == 130,
+        "絶対 PTS を基準相対値へ解決する");
+    expect(timeline.resolve(1000) != RGY_ERR_NONE, "resolve の2回目はエラーになる");
+    expect(!timeline.loadError().empty(), "resolve の再実行エラー理由を保持する");
+}
+
+void testResolveWrap() {
+    TestFile file("resolve_wrap", manifest("cut 8589934500 1000\n"));
+    TSRCutTimeline timeline;
+    expectLoadAndResolve(timeline, file, 8589934000LL);
+    expect(timeline.rangeCount() == 1, "33bit wrap を跨ぐ cut を保持する");
+    expect(timeline.ranges()[0].start == 500 && timeline.ranges()[0].end == 1592,
+        "33bit wrap を跨ぐ cut を基準相対値へ解決する");
+    expect(timeline.totalRemoved() == 1092, "33bit wrap を跨ぐ cut 幅を計算する");
 }
 
 void testTextEncoding() {
     {
         TestFile file("utf8_bom", std::string("\xef\xbb\xbf") + manifest("cut 100 130\n"));
         TSRCutTimeline timeline;
-        expect(timeline.load(file.path()) == RGY_ERR_NONE, "UTF-8 BOM 付きカットリストをロードできる");
+        expectLoadAndResolve(timeline, file);
         expect(timeline.rangeCount() == 1 && timeline.isCut(100), "UTF-8 BOM 付きでも cut を保持する");
     }
     {
@@ -159,7 +187,7 @@ void testTextEncoding() {
         }
         TestFile file("crlf", crlfText);
         TSRCutTimeline timeline;
-        expect(timeline.load(file.path()) == RGY_ERR_NONE, "CRLF のカットリストをロードできる");
+        expectLoadAndResolve(timeline, file);
         expect(timeline.rangeCount() == 1 && timeline.isCut(100), "CRLF でも cut を保持する");
     }
 }
@@ -467,7 +495,8 @@ int main() {
     testMultipleRanges();
     testNormalization();
     testErrors();
-    testOriginPTS();
+    testResolve();
+    testResolveWrap();
     testTextEncoding();
     testPCRReadWrite();
     testPESRewrite();

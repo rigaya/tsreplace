@@ -31,10 +31,10 @@ class TSRCutTimeline {
 public:
     TSRCutTimeline();
 
-    RGY_ERR load(const tstring& filename);
+    RGY_ERR load(const tstring& filename); // 絶対PTSのcutをロードする
+    RGY_ERR resolve(int64_t refPTS);       // 入力TSの基準PTSから相対化して内部テーブルを構築する
     const tstring& loadError() const;
     bool enabled() const;
-    int64_t originPTS() const;
     size_t rangeCount() const;
     const std::vector<TSRCutRange>& ranges() const;
     int64_t totalRemoved() const;
@@ -49,9 +49,11 @@ private:
 
     std::vector<TSRCutRange> m_ranges;
     std::vector<int64_t> m_removedBeforeRange;
+    std::vector<TSRCutRange> m_absoluteRanges;
+    std::vector<size_t> m_absoluteRangeLines;
     tstring m_loadError;
     bool m_loaded;
-    int64_t m_originPTS;
+    bool m_resolved;
     int64_t m_totalRemoved;
     mutable size_t m_cachedRange;
 };

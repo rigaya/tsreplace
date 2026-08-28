@@ -192,6 +192,11 @@ timestampを保持できるコンテナ入りの映像を想定しており、ra
 
 `--start-point` は置き換え映像の時刻合わせの基準であり、`--replace-delay` とは独立して動作します。
 
+### --replace-first-pts &lt;int64&gt;
+置き換え映像の先頭フレームに対応する元TS上の絶対PTSを、33bitの90kHz単位で指定します。
+
+指定した場合は、置き換え映像の時刻合わせで `--start-point` と `--replace-delay` から算出する原点より優先されます。`--replace-delay` による出力開始位置の制御は従来どおり独立して動作します。
+
 ### --end-at-replace-eof [&lt;int&gt;]
 置き換える映像ファイルのEOFに到達した時点から、指定した余裕時間(ms)後にTS出力を終了します。
 

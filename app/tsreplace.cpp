@@ -160,6 +160,7 @@ TSRReplaceParams::TSRReplaceParams() :
     cutList(),
     startpoint(TSRReplaceStartPoint::KeyframPts),
     replaceDelay(0),
+    replaceFirstPTS(TIMESTAMP_INVALID_VALUE),
     endAtReplaceEOF(false),
     eofCutDelayMs(100),
     addAud(true),
@@ -1021,6 +1022,7 @@ TSReplace::TSReplace() :
     m_encThreadErr(),
     m_encQueueOut(),
     m_replaceDelay(0),
+    m_replaceFirstPTS(TIMESTAMP_INVALID_VALUE),
     m_outputStartTimestamp(TIMESTAMP_INVALID_VALUE),
     m_endAtReplaceEOF(false),
     m_eofCutDelayMs(100),
@@ -1096,6 +1098,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_startPoint = prms.startpoint;
     m_outputStartTimestamp = TIMESTAMP_INVALID_VALUE;
     m_replaceDelay = prms.replaceDelay;
+    m_replaceFirstPTS = prms.replaceFirstPTS;
     m_addAud = prms.addAud;
     m_addHeaders = prms.addHeaders;
     m_removeTypeD = prms.removeTypeD;
@@ -1108,8 +1111,6 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
             AddMessage(RGY_LOG_ERROR, _T("cut list の読み込みに失敗: %s\n"), m_cut.loadError().c_str());
             return err;
         }
-        AddMessage(RGY_LOG_INFO, _T("Loaded %d cut ranges, total cut: %.3f sec\n"),
-            (int)m_cut.rangeCount(), m_cut.totalRemoved() / (double)TS_TIMEBASE);
         m_ccRewriter.reset();
         m_pidCutState.clear();
         if (!m_removeNonTargetService) {
@@ -1142,6 +1143,9 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     }
     AddMessage(RGY_LOG_INFO, _T("Start point : %s.\n"), get_cx_desc(list_startpoint, (int)prms.startpoint));
     AddMessage(RGY_LOG_INFO, _T("Replace delay : %lld (90kHz ticks).\n"), (long long)m_replaceDelay);
+    if (m_replaceFirstPTS != TIMESTAMP_INVALID_VALUE) {
+        AddMessage(RGY_LOG_INFO, _T("Replace first PTS: %lld.\n"), (long long)m_replaceFirstPTS);
+    }
     AddMessage(RGY_LOG_INFO, _T("End at Replace EOF : %s (margin %d ms).\n"),
         m_endAtReplaceEOF ? _T("on") : _T("off"), m_eofCutDelayMs);
     AddMessage(RGY_LOG_INFO, _T("Add AUD     : %s.\n"), m_addAud ? _T("on") : _T("off"));
@@ -1362,7 +1366,7 @@ RGY_ERR TSReplace::writePacket(RGYTSPacket *pkt) {
 }
 
 int64_t TSReplace::srcRel(int64_t ts33) const {
-    return diffTimestampTsAMinusB(ts33, m_cut.originPTS());
+    return diffTimestampTsAMinusB(ts33, m_vidFirstFramePTS);
 }
 
 int64_t TSReplace::mapToOutput(int64_t ts33) const {
@@ -1779,12 +1783,10 @@ int64_t TSReplace::getStartPointPTS() const {
 }
 
 int64_t TSReplace::getReplaceVideoOriginPTS() const {
-    if (!cutMode()) {
-        return getStartPointPTS();
+    if (m_replaceFirstPTS != TIMESTAMP_INVALID_VALUE) {
+        return m_replaceFirstPTS;
     }
-    // cut-list が座標系を定義するため、cut モードでは元TS時間軸の origin_pts + replace-delay を原点にする。
-    // 呼び出し側で出力時間軸へ変換する。start-point 基準では境界がずれてフレームが欠落する。
-    return (m_cut.originPTS() + m_replaceDelay) & ((int64_t{ 1 } << 33) - 1);
+    return getStartPointPTS();
 }
 
 RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
@@ -1879,12 +1881,14 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
         (m_startPoint == TSRReplaceStartPoint::KeyframPts) ? _T("*") : _T(" "),
         m_vidFirstKeyPTS, (m_vidFirstKeyPTS - m_vidFirstPacketPTS) * 1000.0 / (double)TS_TIMEBASE, (m_vidFirstKeyPTS - m_vidFirstFramePTS) * 1000.0 / (double)TS_TIMEBASE);
     if (cutMode()) {
-        const auto diff = diffTimestampTsAMinusB(m_cut.originPTS(), m_vidFirstFramePTS);
-        AddMessage(RGY_LOG_INFO, _T("  Cut origin   PTS: %11lld [%+7.1f ms]\n"),
-            (long long)m_cut.originPTS(), diff * 1000.0 / (double)TS_TIMEBASE);
-        AddMessage(RGY_LOG_INFO, _T("cut list の origin_pts (%lld) を置換映像の座標原点として使用する (映像先頭フレーム PTS %lld、差 %+.1f ms)\n"),
-            (long long)m_cut.originPTS(), (long long)m_vidFirstFramePTS, diff * 1000.0 / (double)TS_TIMEBASE);
-        const auto startRel = diffTimestampTsAMinusB(m_outputStartTimestamp, m_cut.originPTS());
+        if (const auto err = m_cut.resolve(m_vidFirstFramePTS); err != RGY_ERR_NONE) {
+            AddMessage(RGY_LOG_ERROR, _T("cut list の範囲解決に失敗: %s\n"), m_cut.loadError().c_str());
+            return err;
+        }
+        AddMessage(RGY_LOG_INFO, _T("Loaded %d cut ranges, total cut: %.3f sec\n"),
+            (int)m_cut.rangeCount(), m_cut.totalRemoved() / (double)TS_TIMEBASE);
+        AddMessage(RGY_LOG_INFO, _T("  Cut resolve  PTS: %11lld (first-frame)\n"), (long long)m_vidFirstFramePTS);
+        const auto startRel = diffTimestampTsAMinusB(m_outputStartTimestamp, m_vidFirstFramePTS);
         for (const auto& range : m_cut.ranges()) {
             if (range.end <= startRel) {
                 AddMessage(RGY_LOG_WARN, _T("cut 区間 [%lld, %lld) が出力開始点 (%lld) より前で終了している (--replace-delay と二重指定の可能性)\n"),
@@ -1892,6 +1896,9 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
             }
         }
     }
+    AddMessage(RGY_LOG_INFO, _T("  Replace origin PTS: %11lld (%s)\n"),
+        (long long)getReplaceVideoOriginPTS(),
+        (m_replaceFirstPTS != TIMESTAMP_INVALID_VALUE) ? _T("first-pts") : _T("start-point"));
     if (m_replaceDelay > 0) {
         AddMessage(RGY_LOG_INFO, _T("  Output start PTS: %11lld (delay %lld [%+7.1f ms])\n"), (long long)m_outputStartTimestamp, (long long)m_replaceDelay, m_replaceDelay * 1000.0 / (double)TS_TIMEBASE);
     }
@@ -2355,6 +2362,7 @@ static void show_help() {
         _T("   --start-point <string>       set start point\n")
         _T("                                 keyframe, firstframe, firstpacket\n")
         _T("   --replace-delay <int>        cut packets until (first timestamp + delay)\n")
+        _T("   --replace-first-pts <int64>  set replace video first frame PTS (33bit)\n")
         _T("   --end-at-replace-eof [<int>] stop output around replace EOF (+margin ms)\n")
         _T("   --cut-list <filename>        set cm cut list file\n")
 
@@ -2521,6 +2529,25 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
         }
         if (prm.replaceDelay < 0) {
             _ftprintf(stderr, _T("Negative value is not allowed for --%s: \"%s\""), option_name, strInput[i]);
+            return 1;
+        }
+        return 0;
+    }
+    if (IS_OPTION("replace-first-pts")) {
+        i++;
+        try {
+            size_t parsedLength = 0;
+            prm.replaceFirstPTS = std::stoll(strInput[i], &parsedLength);
+            if (parsedLength != _tcslen(strInput[i])) {
+                _ftprintf(stderr, _T("Unknown value for --%s: \"%s\""), option_name, strInput[i]);
+                return 1;
+            }
+        } catch (...) {
+            _ftprintf(stderr, _T("Unknown value for --%s: \"%s\""), option_name, strInput[i]);
+            return 1;
+        }
+        if (prm.replaceFirstPTS < 0 || prm.replaceFirstPTS >= (int64_t{ 1 } << 33)) {
+            _ftprintf(stderr, _T("Value out of 33bit range for --%s: \"%s\""), option_name, strInput[i]);
             return 1;
         }
         return 0;
