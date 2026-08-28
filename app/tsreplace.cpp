@@ -427,6 +427,8 @@ AVCodecID TSReplaceVideo::getVidCodecID() const {
 RGYTSStreamType TSReplaceVideo::getVideoStreamType() const {
     if (m_Demux.video.stream) {
         switch (m_Demux.video.stream->codecpar->codec_id) {
+        case AV_CODEC_ID_MPEG2VIDEO:
+            return RGYTSStreamType::H262_VIDEO;
         case AV_CODEC_ID_H264:
             return RGYTSStreamType::H264_VIDEO;
         case AV_CODEC_ID_HEVC:
@@ -1596,7 +1598,20 @@ uint8_t TSReplace::getAudValue(const AVPacket *pkt) const {
 }
 
 std::tuple<RGY_ERR, bool, bool> TSReplace::checkPacket(const AVPacket *pkt) {
-    if (m_videoReplace->getVidCodecID() == AV_CODEC_ID_H264) {
+    if (m_videoReplace->getVidCodecID() == AV_CODEC_ID_MPEG2VIDEO) {
+        // MPEG-2 VideoにはAUDがないため、シーケンスヘッダの有無だけを確認する。
+        bool has_sequence_header = false;
+        for (int i = 0; i + 3 < pkt->size; i++) {
+            if (pkt->data[i + 0] == 0x00
+                && pkt->data[i + 1] == 0x00
+                && pkt->data[i + 2] == 0x01
+                && pkt->data[i + 3] == 0xb3) {
+                has_sequence_header = true;
+                break;
+            }
+        }
+        return { RGY_ERR_NONE, false, has_sequence_header };
+    } else if (m_videoReplace->getVidCodecID() == AV_CODEC_ID_H264) {
         const auto nal_list = m_parseNalH264(pkt->data, pkt->size);
         const auto h264_aud_nal = std::find_if(nal_list.begin(), nal_list.end(), [](nal_info info) { return info.type == NALU_H264_AUD; });
         const auto h264_sps_nal = std::find_if(nal_list.begin(), nal_list.end(), [](nal_info info) { return info.type == NALU_H264_SPS; });
@@ -1626,7 +1641,8 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
         return err;
     }
     const bool replaceToHEVC = m_videoReplace->getVidCodecID() == AV_CODEC_ID_HEVC;
-    const bool addAud = m_addAud && !has_aud;
+    const bool replaceToMPEG2 = m_videoReplace->getVidCodecID() == AV_CODEC_ID_MPEG2VIDEO;
+    const bool addAud = m_addAud && !replaceToMPEG2 && !has_aud;
     const bool addHeader = m_addHeaders && isKey && !has_header;
     // 置換映像のtimecodeはカット済みの出力時間軸なので、mapToOutput()を適用すると二重にカットされる。
     const auto pts = av_rescale_q(avpkt->pts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
