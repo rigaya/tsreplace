@@ -426,6 +426,121 @@ void testPESCutSelection() {
         "PTS と source clock がともに未確定なら判定時刻も未確定にする");
 }
 
+std::vector<uint8_t> makeADTSFrame(size_t frameLength, uint8_t fill) {
+    std::vector<uint8_t> frame(frameLength, fill);
+    frame[0] = 0xff;
+    frame[1] = 0xf1;
+    frame[2] = 0x4c; // AAC LC / 48kHz / stereo
+    frame[3] = (uint8_t)(0x80 | ((frameLength >> 11) & 0x03));
+    frame[4] = (uint8_t)(frameLength >> 3);
+    frame[5] = (uint8_t)(((frameLength & 0x07) << 5) | 0x1f);
+    frame[6] = 0xfc;
+    return frame;
+}
+
+void testADTSBoundaryHelpers() {
+    const auto frame20 = makeADTSFrame(20, 0x11);
+    const auto frame15 = makeADTSFrame(15, 0x22);
+
+    TSRADTSChainState chain;
+    const auto first = tsrWalkADTSPayload(frame20.data(), 12, chain);
+    expect(first.valid && first.lastCompleteOffset == 0 && chain.frameRemaining == 8,
+        "PES をまたぐ ADTS frame の残りを保持する");
+    std::vector<uint8_t> secondPayload(frame20.begin() + 12, frame20.end());
+    secondPayload.insert(secondPayload.end(), frame15.begin(), frame15.end());
+    const auto second = tsrWalkADTSPayload(secondPayload.data(), secondPayload.size(), chain);
+    expect(second.valid && second.lastCompleteOffset == secondPayload.size()
+        && chain.frameRemaining == 0 && chain.headerPrefix.empty(),
+        "次 PES で継続 frame と後続 frame を完結できる");
+
+    chain.reset();
+    const auto prefixFrame = makeADTSFrame(11, 0x33);
+    const auto followingFrame = makeADTSFrame(13, 0x44);
+    std::vector<uint8_t> headerSplitFirst = prefixFrame;
+    headerSplitFirst.insert(headerSplitFirst.end(), followingFrame.begin(), followingFrame.begin() + 3);
+    const auto headerFirst = tsrWalkADTSPayload(headerSplitFirst.data(), headerSplitFirst.size(), chain);
+    expect(headerFirst.valid && headerFirst.lastCompleteOffset == prefixFrame.size()
+        && chain.headerPrefix.size() == 3,
+        "PES 末尾に分割された ADTS header を保持する");
+    const auto headerSecond = tsrWalkADTSPayload(followingFrame.data() + 3, followingFrame.size() - 3, chain);
+    expect(headerSecond.valid && headerSecond.lastCompleteOffset == followingFrame.size() - 3
+        && chain.headerPrefix.empty() && chain.frameRemaining == 0,
+        "次 PES で分割 ADTS header を復元して frame を完結する");
+
+    chain.reset();
+    std::vector<uint8_t> truncatePayload = frame15;
+    truncatePayload.insert(truncatePayload.end(), frame20.begin(), frame20.begin() + 5);
+    const auto truncate = tsrWalkADTSPayload(truncatePayload.data(), truncatePayload.size(), chain);
+    expect(truncate.valid && truncate.lastCompleteOffset == frame15.size(),
+        "末尾の不完全 frame より前の truncate 位置を返す");
+
+    std::vector<uint8_t> orphan = { 0x12, 0x34, 0x56, 0x78 };
+    orphan.insert(orphan.end(), frame15.begin(), frame15.end());
+    size_t syncOffset = 0;
+    expect(tsrFindADTSSync(orphan.data(), orphan.size(), syncOffset) && syncOffset == 4,
+        "孤児断片の後ろにある最初の ADTS syncword を見つける");
+
+    auto falseCandidate = makeADTSFrame(7, 0x55);
+    falseCandidate[5] = 0xe0;
+    falseCandidate[6] = 0x00;
+    std::vector<uint8_t> falseThenValid = falseCandidate;
+    falseThenValid.push_back(0x00);
+    falseThenValid.insert(falseThenValid.end(), frame15.begin(), frame15.end());
+    falseThenValid.insert(falseThenValid.end(), frame20.begin(), frame20.end());
+    expect(tsrFindADTSSync(falseThenValid.data(), falseThenValid.size(), syncOffset)
+        && syncOffset == falseCandidate.size() + 1,
+        "次 frame が成立しない偽 syncword を読み飛ばす");
+    const std::array<uint8_t, 8> noSync = { 0, 1, 2, 3, 4, 5, 6, 7 };
+    expect(!tsrFindADTSSync(noSync.data(), noSync.size(), syncOffset),
+        "有効な ADTS syncword がない payload を検出する");
+}
+
+std::vector<uint8_t> collectTSPayload(const std::vector<std::vector<uint8_t>>& packets) {
+    std::vector<uint8_t> payload;
+    for (const auto& packet : packets) {
+        size_t offset = 4;
+        if (((packet[3] >> 4) & 0x02) != 0) {
+            offset += 1 + packet[4];
+        }
+        payload.insert(payload.end(), packet.begin() + offset, packet.end());
+    }
+    return payload;
+}
+
+void testPESPacketize() {
+    std::vector<uint8_t> pesHeader = {
+        0x00, 0x00, 0x01, 0xc0, 0x00, 0x00, 0x80, 0x80, 0x05,
+        0x21, 0x00, 0x01, 0x00, 0x01
+    };
+    std::vector<uint8_t> esPayload(200);
+    for (size_t i = 0; i < esPayload.size(); i++) {
+        esPayload[i] = (uint8_t)i;
+    }
+    std::vector<std::vector<uint8_t>> packets;
+    expect(tsrPacketizePES(0x0112, pesHeader, esPayload, packets),
+        "変更した音声 PES を再パケット化できる");
+    expect(packets.size() == 2
+        && packets[0].size() == 188 && packets[1].size() == 188,
+        "再パケット化した TS packet は 188 byte になる");
+    expect((packets[0][1] & 0x40) != 0 && (packets[1][1] & 0x40) == 0,
+        "先頭 TS packet だけに PUSI を立てる");
+    expect((((packets[0][1] & 0x1f) << 8) | packets[0][2]) == 0x0112
+        && (((packets[1][1] & 0x1f) << 8) | packets[1][2]) == 0x0112,
+        "再パケット化で音声 PID を保持する");
+
+    const auto pes = collectTSPayload(packets);
+    const auto expectedPacketLength = pesHeader.size() + esPayload.size() - 6;
+    expect(pes.size() == pesHeader.size() + esPayload.size()
+        && (((size_t)pes[4] << 8) | pes[5]) == expectedPacketLength,
+        "PES_packet_length を変更後の長さへ書き換える");
+    expect(std::equal(pesHeader.begin(), pesHeader.begin() + 4, pes.begin())
+        && std::equal(pesHeader.begin() + 6, pesHeader.end(), pes.begin() + 6)
+        && std::equal(esPayload.begin(), esPayload.end(), pes.begin() + pesHeader.size()),
+        "PES_packet_length 以外の header と ES payload を保存する");
+    expect(((packets.back()[3] >> 4) & 0x03) == 0x03,
+        "最後の端数 packet を adaptation field stuffing で埋める");
+}
+
 void testContinuityRewriter() {
     TSRContinuityRewriter rewriter;
 
@@ -501,6 +616,8 @@ int main() {
     testPCRReadWrite();
     testPESRewrite();
     testPESCutSelection();
+    testADTSBoundaryHelpers();
+    testPESPacketize();
     testContinuityRewriter();
 
     if (failures != 0) {

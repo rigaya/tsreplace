@@ -27,6 +27,26 @@ bool tsrIsPESCutTargetPID(uint16_t packetPid, int aud0Pid, int aud1Pid, int capt
 // PES に PTS がなければ、直近の source clock をカット判定に使う。
 int64_t tsrPESCutReferenceTimestamp(int64_t pts, int64_t sourceClock);
 
+struct TSRADTSChainState {
+    size_t frameRemaining = 0;
+    std::vector<uint8_t> headerPrefix;
+
+    void reset();
+};
+
+struct TSRADTSWalkResult {
+    bool valid;
+    size_t lastCompleteOffset;
+};
+
+// PES をまたぐ ADTS フレーム列を追跡し、この payload 内で最後に完結した位置を返す。
+TSRADTSWalkResult tsrWalkADTSPayload(const uint8_t *payload, size_t size, TSRADTSChainState& state);
+// 孤児フレーム断片を飛ばすため、最初の有効な ADTS syncword を探す。
+bool tsrFindADTSSync(const uint8_t *payload, size_t size, size_t& offset);
+// PES header と ES payload を 188 byte TS packet へ再パケット化する。
+bool tsrPacketizePES(uint16_t pid, const std::vector<uint8_t>& pesHeader,
+    const std::vector<uint8_t>& esPayload, std::vector<std::vector<uint8_t>>& packets);
+
 class TSRCutTimeline {
 public:
     TSRCutTimeline();

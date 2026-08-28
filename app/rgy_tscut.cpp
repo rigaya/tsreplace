@@ -13,6 +13,7 @@
 #include <sstream>
 #include <string>
 
+#include "rgy_bitstream_aac.h"
 #include "rgy_tsstruct.h"
 #include "rgy_tsutil.h"
 
@@ -230,6 +231,168 @@ bool tsrIsPESCutTargetPID(uint16_t packetPid, int aud0Pid, int aud1Pid, int capt
 int64_t tsrPESCutReferenceTimestamp(int64_t pts, int64_t sourceClock) {
     // PTS を持たない PES は、その時点で直近に確定した source clock で判定する。
     return pts != TIMESTAMP_INVALID_VALUE ? pts : sourceClock;
+}
+
+void TSRADTSChainState::reset() {
+    frameRemaining = 0;
+    headerPrefix.clear();
+}
+
+namespace {
+
+bool parseADTSFrameLength(const uint8_t *data, size_t size, size_t& frameLength) {
+    RGYAACHeader header = {};
+    if (data == nullptr || size < RGYAACHeader::HEADER_BYTE_SIZE
+        || header.parse(data, size) != 0
+        || header.aac_frame_length < RGYAACHeader::HEADER_BYTE_SIZE) {
+        return false;
+    }
+    frameLength = header.aac_frame_length;
+    return true;
+}
+
+} // namespace
+
+TSRADTSWalkResult tsrWalkADTSPayload(const uint8_t *payload, size_t size, TSRADTSChainState& state) {
+    TSRADTSWalkResult result = { true, 0 };
+    if (payload == nullptr && size > 0) {
+        result.valid = false;
+        state.reset();
+        return result;
+    }
+    if (size == 0) {
+        return result;
+    }
+
+    size_t pos = 0;
+    if (state.frameRemaining > 0) {
+        const auto consume = std::min(state.frameRemaining, size);
+        state.frameRemaining -= consume;
+        pos += consume;
+        if (state.frameRemaining == 0) {
+            result.lastCompleteOffset = pos;
+        }
+    }
+
+    if (state.frameRemaining == 0 && !state.headerPrefix.empty()) {
+        if (state.headerPrefix.size() >= RGYAACHeader::HEADER_BYTE_SIZE) {
+            result.valid = false;
+            state.reset();
+            return result;
+        }
+        const auto needed = RGYAACHeader::HEADER_BYTE_SIZE - state.headerPrefix.size();
+        const auto consume = std::min(needed, size - pos);
+        if (consume > 0) {
+            state.headerPrefix.insert(state.headerPrefix.end(), payload + pos, payload + pos + consume);
+        }
+        pos += consume;
+        if (state.headerPrefix.size() < RGYAACHeader::HEADER_BYTE_SIZE) {
+            return result;
+        }
+        size_t frameLength = 0;
+        if (!parseADTSFrameLength(state.headerPrefix.data(), state.headerPrefix.size(), frameLength)) {
+            result.valid = false;
+            state.reset();
+            return result;
+        }
+        const auto consumedHeader = state.headerPrefix.size();
+        state.headerPrefix.clear();
+        state.frameRemaining = frameLength - consumedHeader;
+        const auto consumeFrame = std::min(state.frameRemaining, size - pos);
+        state.frameRemaining -= consumeFrame;
+        pos += consumeFrame;
+        if (state.frameRemaining == 0) {
+            result.lastCompleteOffset = pos;
+        }
+    }
+
+    while (pos < size) {
+        const auto available = size - pos;
+        if (available < RGYAACHeader::HEADER_BYTE_SIZE) {
+            state.headerPrefix.assign(payload + pos, payload + size);
+            break;
+        }
+        size_t frameLength = 0;
+        if (!parseADTSFrameLength(payload + pos, available, frameLength)) {
+            result.valid = false;
+            state.reset();
+            return result;
+        }
+        const auto consume = std::min(frameLength, available);
+        pos += consume;
+        state.frameRemaining = frameLength - consume;
+        if (state.frameRemaining == 0) {
+            result.lastCompleteOffset = pos;
+        }
+    }
+    return result;
+}
+
+bool tsrFindADTSSync(const uint8_t *payload, size_t size, size_t& offset) {
+    offset = 0;
+    if (payload == nullptr) {
+        return false;
+    }
+    for (size_t pos = 0; pos + RGYAACHeader::HEADER_BYTE_SIZE <= size; pos++) {
+        size_t frameLength = 0;
+        if (parseADTSFrameLength(payload + pos, size - pos, frameLength)) {
+            const auto remaining = size - pos;
+            if (frameLength <= remaining
+                && remaining - frameLength >= RGYAACHeader::HEADER_BYTE_SIZE) {
+                size_t nextFrameLength = 0;
+                if (!parseADTSFrameLength(payload + pos + frameLength,
+                    remaining - frameLength, nextFrameLength)) {
+                    continue;
+                }
+            }
+            offset = pos;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool tsrPacketizePES(uint16_t pid, const std::vector<uint8_t>& pesHeader,
+    const std::vector<uint8_t>& esPayload, std::vector<std::vector<uint8_t>>& packets) {
+    packets.clear();
+    if (pid >= 0x1fff || pesHeader.size() < 6
+        || pesHeader[0] != 0x00 || pesHeader[1] != 0x00 || pesHeader[2] != 0x01) {
+        return false;
+    }
+    const auto pesPacketLength = pesHeader.size() + esPayload.size() - 6;
+    if (pesPacketLength > 0xffff) {
+        return false;
+    }
+
+    std::vector<uint8_t> pes = pesHeader;
+    pes[4] = (uint8_t)(pesPacketLength >> 8);
+    pes[5] = (uint8_t)(pesPacketLength & 0xff);
+    pes.insert(pes.end(), esPayload.begin(), esPayload.end());
+
+    for (size_t pos = 0; pos < pes.size();) {
+        const auto len = std::min<size_t>(184, pes.size() - pos);
+        std::vector<uint8_t> packet;
+        packet.reserve(188);
+        packet.push_back(0x47);
+        packet.push_back((uint8_t)(((pos == 0) ? 0x40 : 0x00) | ((pid >> 8) & 0x1f)));
+        packet.push_back((uint8_t)(pid & 0xff));
+        packet.push_back((uint8_t)((len < 184) ? 0x30 : 0x10));
+        if (len < 184) {
+            packet.push_back((uint8_t)(183 - len));
+            if (len < 183) {
+                packet.push_back(0x00);
+                packet.insert(packet.end(), 182 - len, 0xff);
+            }
+        }
+        packet.insert(packet.end(), pes.begin() + pos, pes.begin() + pos + len);
+        if (packet.size() != 188) {
+            packets.clear();
+            return false;
+        }
+        packets.push_back(std::move(packet));
+        pos += len;
+    }
+    return !packets.empty();
 }
 
 TSRCutTimeline::TSRCutTimeline() :

@@ -1367,6 +1367,139 @@ RGY_ERR TSReplace::writePacket(RGYTSPacket *pkt) {
     return RGY_ERR_NONE;
 }
 
+namespace {
+
+bool splitPESHeaderAndPayload(const std::vector<uint8_t>& pesData,
+    std::vector<uint8_t>& pesHeader, std::vector<uint8_t>& esPayload) {
+    pesHeader.clear();
+    esPayload.clear();
+    if (pesData.size() < PES_HEADER_SIZE
+        || pesData[0] != 0x00 || pesData[1] != 0x00 || pesData[2] != 0x01
+        || !rgyPESStreamHasOptionalHeader(pesData[3])) {
+        return false;
+    }
+    const auto headerSize = PES_HEADER_SIZE + (size_t)pesData[8];
+    if (headerSize > pesData.size()) {
+        return false;
+    }
+    pesHeader.assign(pesData.begin(), pesData.begin() + headerSize);
+    esPayload.assign(pesData.begin() + headerSize, pesData.end());
+    return true;
+}
+
+} // namespace
+
+RGY_ERR TSReplace::finalizeHeldADTSPES(uint16_t pid, TSRPidCutState& state, bool truncateTail) {
+    if (state.heldPackets.empty()) {
+        if (truncateTail) {
+            state.adtsChain.reset();
+            state.resyncNeeded = true;
+        }
+        return RGY_ERR_NONE;
+    }
+
+    std::vector<uint8_t> pesHeader;
+    std::vector<uint8_t> esPayload;
+    if (!splitPESHeaderAndPayload(state.heldPESData, pesHeader, esPayload)) {
+        AddMessage(RGY_LOG_WARN, _T("PID 0x%04x: 音声 PES header を解析できないため、この PES を破棄する\n"), pid);
+        state.heldPackets.clear();
+        state.heldPESData.clear();
+        state.heldNeedsFrontTrim = false;
+        state.adtsChain.reset();
+        state.resyncNeeded = true;
+        return RGY_ERR_NONE;
+    }
+
+    bool modified = false;
+    if (state.heldNeedsFrontTrim) {
+        size_t syncOffset = 0;
+        if (!tsrFindADTSSync(esPayload.data(), esPayload.size(), syncOffset)) {
+            // cut 後の PES 全体が前フレームの孤児断片なら、次の PES でも再同期を続ける。
+            state.heldPackets.clear();
+            state.heldPESData.clear();
+            state.heldNeedsFrontTrim = false;
+            state.adtsChain.reset();
+            state.resyncNeeded = true;
+            return RGY_ERR_NONE;
+        }
+        if (syncOffset > 0) {
+            esPayload.erase(esPayload.begin(), esPayload.begin() + syncOffset);
+            modified = true;
+        }
+        state.adtsChain.reset();
+    }
+
+    const auto walk = tsrWalkADTSPayload(esPayload.data(), esPayload.size(), state.adtsChain);
+    if (!walk.valid) {
+        // 元ストリーム側で ADTS チェーンが壊れている場合は、次の PES から再同期する。
+        state.adtsChain.reset();
+        state.resyncNeeded = true;
+        if (truncateTail) {
+            state.heldPackets.clear();
+            state.heldPESData.clear();
+            state.heldNeedsFrontTrim = false;
+            return RGY_ERR_NONE;
+        }
+    }
+
+    if (truncateTail) {
+        // 次が drop PES だと判明した時点で、最後に完結した ADTS フレームより後ろを除く。
+        if (!walk.valid || walk.lastCompleteOffset == 0) {
+            state.heldPackets.clear();
+            state.heldPESData.clear();
+            state.heldNeedsFrontTrim = false;
+            state.adtsChain.reset();
+            state.resyncNeeded = true;
+            return RGY_ERR_NONE;
+        }
+        if (walk.lastCompleteOffset < esPayload.size()) {
+            esPayload.resize(walk.lastCompleteOffset);
+            modified = true;
+        }
+        state.adtsChain.reset();
+        state.resyncNeeded = true;
+    }
+
+    RGY_ERR err = RGY_ERR_NONE;
+    if (modified) {
+        std::vector<std::vector<uint8_t>> packets;
+        if (!tsrPacketizePES(pid, pesHeader, esPayload, packets)) {
+            AddMessage(RGY_LOG_WARN, _T("PID 0x%04x: 音声 PES を再パケット化できないため、この PES を破棄する\n"), pid);
+            state.adtsChain.reset();
+            state.resyncNeeded = true;
+        } else {
+            for (auto& packetData : packets) {
+                RGYTSPacket packet = {};
+                packet.packet = std::move(packetData);
+                if ((err = writePacket(&packet)) != RGY_ERR_NONE) {
+                    break;
+                }
+            }
+        }
+    } else {
+        for (auto& packetData : state.heldPackets) {
+            RGYTSPacket packet = {};
+            packet.packet = std::move(packetData);
+            if ((err = writePacket(&packet)) != RGY_ERR_NONE) {
+                break;
+            }
+        }
+    }
+    state.heldPackets.clear();
+    state.heldPESData.clear();
+    state.heldNeedsFrontTrim = false;
+    return err;
+}
+
+RGY_ERR TSReplace::flushHeldADTSPES() {
+    for (auto& [pid, state] : m_pidCutState) {
+        if (auto err = finalizeHeldADTSPES(pid, state, false); err != RGY_ERR_NONE) {
+            return err;
+        }
+    }
+    return RGY_ERR_NONE;
+}
+
 int64_t TSReplace::srcRel(int64_t ts33) const {
     return diffTimestampTsAMinusB(ts33, m_vidFirstFramePTS);
 }
@@ -2107,12 +2240,18 @@ RGY_ERR TSReplace::restruct() {
     // 出力状態の初期化
     auto outputState = (m_replaceDelay > 0 && m_outputStartTimestamp != TIMESTAMP_INVALID_VALUE) ? TSROutputState::Cutting : TSROutputState::Output;
     bool replaceDelayOutputAudioStarted = false; // m_replaceDelay > 0の場合に、音声出力を開始したかどうかのフラグ
+    bool warnedADTSAudioPCR = false;
 
     //本解析
     for (;;) {
         if (tsPackets.empty()) {
             auto err = readTS(tsPackets);
             if (err != RGY_ERR_NONE) {
+                if (err == RGY_ERR_MORE_DATA) {
+                    if (auto flushErr = flushHeldADTSPES(); flushErr != RGY_ERR_NONE) {
+                        return flushErr;
+                    }
+                }
                 return err;
             }
         }
@@ -2152,6 +2291,9 @@ RGY_ERR TSReplace::restruct() {
                 && diffTimestampTsAMinusB(mapToOutput(curTimestamp), m_outputEndTimestamp) > 0) {
                 AddMessage(RGY_LOG_DEBUG, _T("Stop output at timestamp %11lld (>= EOF+margin %11lld).\n"),
                     (long long)mapToOutput(curTimestamp), (long long)m_outputEndTimestamp);
+                if (auto err = flushHeldADTSPES(); err != RGY_ERR_NONE) {
+                    return err;
+                }
                 return RGY_ERR_NONE;
             }
 
@@ -2205,6 +2347,17 @@ RGY_ERR TSReplace::restruct() {
                     switch (ret.type) {
                     case RGYTSPacketType::PMT:
                         service = m_demuxer->service();
+                        if (!warnedADTSAudioPCR && cutMode() && service != nullptr
+                            && service->pidPcr > 0
+                            && ((service->aud0.stream.type == RGYTSStreamType::ADTS_TRANSPORT
+                                    && service->pidPcr == service->aud0.stream.pid)
+                                || (service->aud1.stream.type == RGYTSStreamType::ADTS_TRANSPORT
+                                    && service->pidPcr == service->aud1.stream.pid))) {
+                            AddMessage(RGY_LOG_WARN,
+                                _T("PCR が音声 PID 0x%04x に同居しているため ADTS フレーム境界そろえを行わない\n"),
+                                service->pidPcr);
+                            warnedADTSAudioPCR = true;
+                        }
                         if (tspkt->header.PayloadStartFlag) {
                             writeReplacedPMT(ret);
                         }
@@ -2290,25 +2443,58 @@ RGY_ERR TSReplace::restruct() {
                                     service->aud0.stream.pid, service->aud1.stream.pid,
                                     service->cap.stream.pid, service->pidSuperimpose)) {
                                 auto& state = m_pidCutState[tspkt->header.PID];
+                                const auto isADTSAudio = ret.stream.type == RGYTSStreamType::ADTS_TRANSPORT
+                                    && tspkt->header.PID != service->pidPcr
+                                    && ((service->aud0.stream.pid > 0 && tspkt->header.PID == service->aud0.stream.pid)
+                                        || (service->aud1.stream.pid > 0 && tspkt->header.PID == service->aud1.stream.pid));
                                 if (tspkt->header.PayloadStartFlag) {
-                                    state.seenPUSI = true;
                                     const auto referenceTimestamp = tsrPESCutReferenceTimestamp(ret.pts, curTimestamp);
-                                    state.keepPES = referenceTimestamp == TIMESTAMP_INVALID_VALUE
-                                        || !isCutTimestamp(referenceTimestamp);
-                                    if (state.keepPES && ret.pts != TIMESTAMP_INVALID_VALUE) {
+                                    auto keepPES = outputPkt && (referenceTimestamp == TIMESTAMP_INVALID_VALUE
+                                        || !isCutTimestamp(referenceTimestamp));
+                                    if (keepPES && ret.pts != TIMESTAMP_INVALID_VALUE) {
                                         auto *packet = tspkt->packet.data();
                                         if (!tsPacketRewritePESTimestamps(packet, tspkt->datasize(),
                                             mapToOutput(ret.pts), mapToOutput(ret.dts))) {
                                             AddMessage(RGY_LOG_WARN, _T("PID 0x%04x: PES header の timestamp を書き換えられなかったため、この PES を破棄する\n"),
                                                 tspkt->header.PID);
-                                            state.keepPES = false;
+                                            keepPES = false;
+                                        }
+                                    }
+                                    if (isADTSAudio) {
+                                        // 最後の keep PES かは次の PUSI で初めて分かるため、ここで直前 PES を確定する。
+                                        if (auto err = finalizeHeldADTSPES(tspkt->header.PID, state, !keepPES); err != RGY_ERR_NONE) {
+                                            return err;
+                                        }
+                                    }
+                                    state.seenPUSI = true;
+                                    state.keepPES = keepPES;
+                                    if (isADTSAudio) {
+                                        if (state.keepPES) {
+                                            state.heldNeedsFrontTrim = state.resyncNeeded;
+                                            state.resyncNeeded = false;
+                                        } else {
+                                            state.adtsChain.reset();
+                                            state.resyncNeeded = true;
                                         }
                                     }
                                 }
                                 if (!state.seenPUSI) {
                                     state.keepPES = false;
                                 }
-                                if (!state.keepPES) {
+                                if (isADTSAudio) {
+                                    if (state.keepPES) {
+                                        // PTS はこの PES 内で開始する最初の access unit を指すため、
+                                        // cut 後に先頭の孤児断片を除いても追加補正はしない。
+                                        state.heldPackets.push_back(tspkt->packet);
+                                        if (tspkt->header.payloadSize > 0) {
+                                            const auto *payload = tspkt->payload();
+                                            state.heldPESData.insert(state.heldPESData.end(),
+                                                payload, payload + tspkt->header.payloadSize);
+                                        }
+                                    }
+                                    // 音声は 1 PES ホールドバック経路からのみ出力する。
+                                    outputPkt = false;
+                                } else if (!state.keepPES) {
                                     outputPkt = false;
                                 }
                             }

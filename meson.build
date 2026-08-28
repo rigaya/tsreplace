@@ -236,6 +236,7 @@ endif
 
 tscut_test = executable('rgy_tscut_test',
   files(
+    'app/rgy_bitstream_aac.cpp',
     'app/rgy_tscut.cpp',
     'app/rgy_tscut_test.cpp',
   ),
