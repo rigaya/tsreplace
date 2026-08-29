@@ -41,7 +41,7 @@
 int rgy_print_stderr(int log_level, const TCHAR *mes, void *handle_, bool disableColor) {
     int ret = 0;
     if (disableColor) {
-        ret = _ftprintf(stderr, mes);
+        ret = _ftprintf(stderr, _T("%s"), mes);
     } else {
 #if defined(_WIN32) || defined(_WIN64)
         HANDLE handle = handle_;
@@ -493,7 +493,7 @@ void RGYLog::write_log(RGYLogLevel log_level, const RGYLogType logtype, const TC
 #ifdef UNICODE
                 if (!stderr_write_to_console) { //出力先がリダイレクトされるならANSIで
                     buffer_char = wstring_to_string(tchar_to_wstring(line), CP_UTF8);
-                    fprintf(stderr, buffer_ptr);
+                    fprintf(stderr, "%s", buffer_char.c_str());
                 }
                 if (stderr_write_to_console) //出力先がコンソールならWCHARで
 #endif
@@ -502,7 +502,7 @@ void RGYLog::write_log(RGYLogLevel log_level, const RGYLogType logtype, const TC
         } else {
 #ifdef UNICODE
             if (!stderr_write_to_console) //出力先がリダイレクトされるならANSIで
-                fprintf(stderr, buffer_ptr);
+                fputs(buffer_ptr, stderr);
             if (stderr_write_to_console) //出力先がコンソールならWCHARで
 #endif
                 rgy_print_stderr(log_level, buffer, hStdErr, m_disableColor);

@@ -102,6 +102,34 @@ using uniuqeRGYChannelLayout = std::unique_ptr<RGYChannelLayout>;
 #define FF_PROFILE_UNKNOWN (AV_PROFILE_UNKNOWN)
 #endif
 
+static inline AVRational rgy_av_stream_get_codec_timebase(const AVStream *stream) {
+#if LIBAVFORMAT_VERSION_MAJOR < 63
+    return av_stream_get_codec_timebase(stream);
+#else
+    return stream->time_base;
+#endif
+}
+
+static inline const AVSampleFormat *rgy_avcodec_get_sample_fmts(const AVCodec *codec) {
+#if LIBAVCODEC_VERSION_MAJOR < 63
+    return codec->sample_fmts;
+#else
+    const void *sample_fmts = nullptr;
+    avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, &sample_fmts, nullptr);
+    return static_cast<const AVSampleFormat *>(sample_fmts);
+#endif
+}
+
+static inline const int *rgy_avcodec_get_supported_samplerates(const AVCodec *codec) {
+#if LIBAVCODEC_VERSION_MAJOR < 63
+    return codec->supported_samplerates;
+#else
+    const void *samplerates = nullptr;
+    avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_SAMPLE_RATE, 0, &samplerates, nullptr);
+    return static_cast<const int *>(samplerates);
+#endif
+}
+
 template<typename T>
 struct RGYAVDeleter {
     RGYAVDeleter() : deleter(nullptr) {};
@@ -276,9 +304,9 @@ static tstring errorMesForCodec(const TCHAR *mes, AVCodecID targetCodec) {
 
 static const AVRational HW_NATIVE_TIMEBASE = { 1, (int)HW_TIMEBASE };
 static const TCHAR *AVCODEC_DLL_NAME[] = {
-    _T("avcodec-62.dll"), _T("avformat-62.dll"), _T("avutil-60.dll"), _T("avfilter-11.dll"), _T("swresample-6.dll")
+    _T("avcodec-63.dll"), _T("avformat-63.dll"), _T("avutil-61.dll"), _T("avfilter-12.dll"), _T("swresample-7.dll")
 #if ENABLE_LIBAVDEVICE
-    , _T("avdevice-62.dll")
+    , _T("avdevice-63.dll")
 #endif
 };
 
@@ -478,7 +506,12 @@ static void AVStreamCopySideData(AVStream *streamDst, const AVStream *streamSrc)
 #if AVCODEC_PAR_CODED_SIDE_DATA_AVAIL
     for (int i = 0; i < streamSrc->codecpar->nb_coded_side_data; i++) {
         const auto& side_data = streamSrc->codecpar->coded_side_data[i];
-        av_packet_side_data_add(&streamDst->codecpar->coded_side_data, &streamDst->codecpar->nb_coded_side_data, side_data.type, side_data.data, side_data.size, 0);
+        auto side_data_copy = (uint8_t *)av_malloc(side_data.size);
+        if (side_data_copy == nullptr) {
+            continue;
+        }
+        memcpy(side_data_copy, side_data.data, side_data.size);
+        av_packet_side_data_add(&streamDst->codecpar->coded_side_data, &streamDst->codecpar->nb_coded_side_data, side_data.type, side_data_copy, side_data.size, 0);
     }
 #else
     for (int i = 0; i < streamSrc->nb_side_data; i++) {

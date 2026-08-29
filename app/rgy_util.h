@@ -94,7 +94,7 @@ using std::shared_ptr;
 template<typename T>
 static bool rgy_is_pow2(T i) {
     static_assert(std::is_integral<T>::value, "rgy_is_pow2 is defined only for integer.");
-    return (i & (i - 1)) != 0;
+    return i != 0 && (i & (i - 1)) == 0;
 }
 template<typename T>
 static T rgy_ceil_int(T i, T div) {
@@ -980,8 +980,10 @@ static inline int replace(WCHAR *str, size_t nSize, const WCHAR *old_str, const 
 }
 
 static void *find_data(const void *data_to_search, size_t data_to_search_len, const void *data_to_find, size_t data_to_find_len) {
+    if (data_to_find_len == 0 || data_to_find_len > data_to_search_len)
+        return NULL;
     const BYTE *search_fin = (const BYTE *)data_to_search + (data_to_search_len - data_to_find_len);
-    for (const BYTE *ptr = (const BYTE *)data_to_search; ptr < search_fin; ptr++)
+    for (const BYTE *ptr = (const BYTE *)data_to_search; ptr <= search_fin; ptr++)
         if (0 == memcmp(ptr, data_to_find, data_to_find_len))
             return (void *)ptr;
     return NULL;
@@ -1017,6 +1019,9 @@ std::wstring add_indent(const std::wstring& str, const int indentLength);
 std::vector<std::wstring> sep_cmd(const std::wstring &cmd);
 std::vector<std::string> sep_cmd(const std::string &cmd);
 #endif //#if defined(_WIN32) || defined(_WIN64)
+
+std::string removeAnsiEscapeSequences(const std::string& input);
+std::wstring removeAnsiEscapeSequences(const std::wstring& input);
 
 std::string str_replace(std::string str, const std::string& from, const std::string& to);
 

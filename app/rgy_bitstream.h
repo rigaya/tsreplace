@@ -74,6 +74,12 @@ enum : uint8_t {
     NALU_H264_SUBSPS   = 15,
 
     NALU_HEVC_UNDEF    = 0,
+    NALU_HEVC_SLICE_IDR_W_RADL = 19,
+    NALU_HEVC_SLICE_IDR_N_LP = 20,
+    NALU_HEVC_SLICE_BLA_W_LP = 16,
+    NALU_HEVC_SLICE_BLA_W_RADL = 17,
+    NALU_HEVC_SLICE_BLA_N_LP = 18,
+    NALU_HEVC_SLICE_CRA = 21,
     NALU_HEVC_VPS      = 32,
     NALU_HEVC_SPS      = 33,
     NALU_HEVC_PPS      = 34,
@@ -383,7 +389,7 @@ public:
         }
     }
     const std::vector<uint8_t>& get_data() const { return data; }
-    const bool aligned() const { return bits_written == 0; }
+    bool aligned() const { return bits_written == 0; }
 };
 
 static void write_av1_variable_bits(RGYBitWriter& writer, uint32_t value, uint32_t n) {

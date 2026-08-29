@@ -37,8 +37,8 @@
 std::vector<uint8_t> unnal(const uint8_t *ptr, size_t len) {
     std::vector<uint8_t> data;
     data.reserve(len);
-    data.push_back(ptr[0]);
-    data.push_back(ptr[1]);
+    if (len > 0) data.push_back(ptr[0]);
+    if (len > 1) data.push_back(ptr[1]);
     for (size_t i = 2; i < len; i++) {
         if (ptr[i-2] == 0x00 && ptr[i-1] == 0x00 && ptr[i] == 0x03) {
             //skip
@@ -733,6 +733,7 @@ std::vector<nal_info> parse_nal_unit_h264_c(const uint8_t *data, size_t size) {
             if (next == RGY_MEMMEM_NOT_FOUND) break;
 
             i += next;
+            if (i + 3 >= (int64_t)size) break;
             if (nal_start.ptr) {
                 nal_list.push_back(nal_start);
             }
@@ -763,6 +764,7 @@ std::vector<nal_info> parse_nal_unit_hevc_c(const uint8_t *data, size_t size) {
             if (next == RGY_MEMMEM_NOT_FOUND) break;
 
             i += next;
+            if (i + 4 >= (int64_t)size) break;
             if (nal_start.ptr) {
                 nal_list.push_back(nal_start);
             }
@@ -795,6 +797,7 @@ std::vector<nal_info> parse_nal_unit_vvc_c(const uint8_t *data, size_t size) {
             if (next == RGY_MEMMEM_NOT_FOUND) break;
 
             i += next;
+            if (i + 4 >= (int64_t)size) break;
             if (nal_start.ptr) {
                 nal_list.push_back(nal_start);
             }
@@ -881,14 +884,15 @@ static std::unique_ptr<unit_info> get_unit(const uint8_t *data, const size_t siz
         unit->unit_data.resize(ret);
     } else {
         size_t obu_size = 0;
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 8 && data < start_pos + size; i++) {
             uint8_t byte = *data++;
             obu_size |= (uint64_t)(byte & 0x7f) << (i * 7);
             if (!(byte & 0x80))
                 break;
         }
 
-        const size_t ret = obu_size + (data - start_pos);
+        size_t ret = obu_size + (data - start_pos);
+        if (ret > size) ret = size; // clamp to the bytes actually available in this unit
         unit->unit_data.resize(ret);
     }
     unit->obu_offset = (int)(data - start_pos);

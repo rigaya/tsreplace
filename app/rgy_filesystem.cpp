@@ -276,13 +276,13 @@ bool rgy_get_filesize(const char *filepath, uint64_t *filesize) {
     FILE *fp = fopen(filepath, "rb");
     if (fp == NULL || fstat(fileno(fp), &stat)) {
         *filesize = 0;
-        return 1;
+        return false;
     }
     if (fp) {
         fclose(fp);
     }
     *filesize = stat.st_size;
-    return 0;
+    return true;
 #endif //#if defined(_WIN32) || defined(_WIN64)
 }
 
@@ -508,7 +508,31 @@ std::string getExeDirA() {
     return PathRemoveFileSpecFixed(getExePathA()).second;
 }
 
+bool rgy_path_is_windows_named_pipe(const TCHAR *path) {
+#if defined(_WIN32) || defined(_WIN64)
+    return path != nullptr && path == _tcsstr(path, _T(R"(\\.\pipe\)"));
+#else
+    (void)path;
+    return false;
+#endif
+}
+
+bool rgy_path_is_windows_named_pipe(const tstring& path) {
+    return rgy_path_is_windows_named_pipe(path.c_str());
+}
+
 bool rgy_path_is_same(const TCHAR *path1, const TCHAR *path2) {
+    // 標準入力や Windows 名前付きパイプに std::filesystem::equivalent を使わない。
+    // 待機中のパイプへ接続してインスタンスを消費する可能性があるため。
+    if (path1 == nullptr || path2 == nullptr) {
+        return false;
+    }
+    if (0 == _tcscmp(path1, _T("-"))
+        || 0 == _tcscmp(path2, _T("-"))
+        || rgy_path_is_windows_named_pipe(path1)
+        || rgy_path_is_windows_named_pipe(path2)) {
+        return 0 == _tcscmp(path1, path2);
+    }
     try {
         const auto p1 = std::filesystem::path(path1);
         const auto p2 = std::filesystem::path(path2);
@@ -841,11 +865,11 @@ bool swap_file(const char *fileA, const char *fileB) {
     for (int i = 0; !i || rgy_file_exists(filetemp); i++) {
         filetemp = std::string(fileA) + ".swap" + std::to_string(i) + ".tmp";
     }
-    if (rgy_file_rename(fileA, filetemp))
+    if (!rgy_file_rename(fileA, filetemp))
         return FALSE;
-    if (rgy_file_rename(fileB, fileA))
+    if (!rgy_file_rename(fileB, fileA))
         return FALSE;
-    if (rgy_file_rename(filetemp, fileB))
+    if (!rgy_file_rename(filetemp, fileB))
         return FALSE;
     return TRUE;
 }
@@ -857,11 +881,11 @@ bool swap_file(const wchar_t *fileA, const wchar_t *fileB) {
     for (int i = 0; !i || rgy_file_exists(filetemp); i++) {
         filetemp = std::wstring(fileA) + L".swap" + std::to_wstring(i) + L".tmp";
     }
-    if (rgy_file_rename(fileA, filetemp))
+    if (!rgy_file_rename(fileA, filetemp))
         return FALSE;
-    if (rgy_file_rename(fileB, fileA))
+    if (!rgy_file_rename(fileB, fileA))
         return FALSE;
-    if (rgy_file_rename(filetemp, fileB))
+    if (!rgy_file_rename(filetemp, fileB))
         return FALSE;
     return TRUE;
 }
