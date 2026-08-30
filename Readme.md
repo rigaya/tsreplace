@@ -24,7 +24,7 @@ tsの映像部分のみの置き換えを行い、サイズの圧縮を図るツ
 Windows 10/11 (x86/x64)  
 
 ### Linux
-Ubuntu 20.04 - 24.04 (x64) ほか
+Ubuntu 20.04 - 24.04 (x64/arm64) ほか
 
 ---
 
@@ -136,6 +136,11 @@ tsreplaceの```-e```オプションで指定のパスのエンコーダを起動
 - x264  
 
   `tsreplace.exe -i <入力tsファイル> -o <出力tsファイル> -e ffmpeg.exe -y -f mpegts -i - -copyts -start_at_zero -an -c:v libx264 -flags +ildct+ilme -preset slow -crf 23 -g 90 -f mpegts -`
+
+- x262
+
+  `ffmpeg.exe -i input.ts -map 0:v:0 -an -sn -dn -pix_fmt yuv420p -f yuv4mpegpipe - | x262.exe --demuxer y4m --fps 30000/1001 --tff --profile main --level high --keyint 15 --vbv-maxrate 20000 --vbv-bufsize 9782 -o - - | ffmpeg.exe -f mpegvideo -r 30000/1001 -i - -c:v copy -f mpegts <置き換え映像ファイル>.ts`
+  `tsreplace.exe -i <入力tsファイル> -r <置き換え映像ファイル>.ts -o <出力tsファイル>`
 
 ---
 
