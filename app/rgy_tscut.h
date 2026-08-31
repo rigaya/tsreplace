@@ -56,6 +56,7 @@ public:
     const tstring& loadError() const;
     bool enabled() const;
     size_t rangeCount() const;
+    const std::vector<TSRCutRange>& absoluteRanges() const;
     const std::vector<TSRCutRange>& ranges() const;
     int64_t totalRemoved() const;
 

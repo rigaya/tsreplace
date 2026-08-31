@@ -607,6 +607,11 @@ size_t TSRCutTimeline::rangeCount() const {
     return m_ranges.size();
 }
 
+const std::vector<TSRCutRange>& TSRCutTimeline::absoluteRanges() const {
+    assert(m_loaded);
+    return m_absoluteRanges;
+}
+
 const std::vector<TSRCutRange>& TSRCutTimeline::ranges() const {
     assert(m_resolved);
     return m_ranges;

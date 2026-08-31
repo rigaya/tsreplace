@@ -151,6 +151,10 @@ void testResolve() {
     TestFile file("resolve", manifest("cut 1100 1130\n"));
     TSRCutTimeline timeline;
     expectLoadAndResolve(timeline, file, 1000);
+    expect(timeline.absoluteRanges().size() == 1
+        && timeline.absoluteRanges()[0].start == 1100
+        && timeline.absoluteRanges()[0].end == 1130,
+        "ログ出力用の絶対 PTS 範囲を保持する");
     expect(timeline.rangeCount() == 1, "resolve 後に cut を保持する");
     expect(timeline.ranges()[0].start == 100 && timeline.ranges()[0].end == 130,
         "絶対 PTS を基準相対値へ解決する");

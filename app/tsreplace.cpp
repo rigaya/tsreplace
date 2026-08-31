@@ -62,6 +62,21 @@ static int64_t diffTimestampTsAMinusB(int64_t a, int64_t b) {
     return diff;
 }
 
+// 90kHz の相対時刻を、符号付きの時:分:秒.msへ変換する。
+static tstring formatTimestampOffset(int64_t timestamp) {
+    constexpr int64_t TIMESTAMP_TIMEBASE = 90000;
+    const auto signedMillisec = timestamp / (TIMESTAMP_TIMEBASE / 1000);
+    const auto negative = signedMillisec < 0;
+    const auto millisec = negative ? -signedMillisec : signedMillisec;
+    const auto hours = millisec / (60 * 60 * 1000);
+    const auto minutes = (millisec / (60 * 1000)) % 60;
+    const auto seconds = (millisec / 1000) % 60;
+    const auto milliseconds = millisec % 1000;
+    return strsprintf(_T("%s%lld:%02lld:%02lld.%03lld"),
+        negative ? _T("-") : _T(""),
+        (long long)hours, (long long)minutes, (long long)seconds, (long long)milliseconds);
+}
+
 static_assert(TIMESTAMP_INVALID_VALUE == AV_NOPTS_VALUE);
 
 static int funcReadPacket(void *opaque, uint8_t *buf, int buf_size) {
@@ -2137,8 +2152,15 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
             return err;
         }
         AddMessage(RGY_LOG_INFO, _T("Loaded %d cut ranges, total cut: %.3f sec\n"),
-            (int)m_cut.rangeCount(), m_cut.totalRemoved() / (double)TS_TIMEBASE);
+            (int)m_cut.absoluteRanges().size(), m_cut.totalRemoved() / (double)TS_TIMEBASE);
         AddMessage(RGY_LOG_INFO, _T("  Cut resolve  PTS: %11lld (first-frame)\n"), (long long)m_vidFirstFramePTS);
+        for (const auto& range : m_cut.absoluteRanges()) {
+            const auto start = diffTimestampTsAMinusB(range.start, m_vidFirstFramePTS);
+            const auto end = diffTimestampTsAMinusB(range.end, m_vidFirstFramePTS);
+            AddMessage(RGY_LOG_INFO, _T("  cut %lld - %lld (%s - %s)\n"),
+                (long long)range.start, (long long)range.end,
+                formatTimestampOffset(start).c_str(), formatTimestampOffset(end).c_str());
+        }
         const auto startRel = diffTimestampTsAMinusB(m_outputStartTimestamp, m_vidFirstFramePTS);
         for (const auto& range : m_cut.ranges()) {
             if (range.end <= startRel) {
