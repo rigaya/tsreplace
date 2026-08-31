@@ -1153,17 +1153,17 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
 
     if (!prms.cutList.empty()) {
         if (const auto err = m_cut.load(prms.cutList); err != RGY_ERR_NONE) {
-            AddMessage(RGY_LOG_ERROR, _T("cut list の読み込みに失敗: %s\n"), m_cut.loadError().c_str());
+            AddMessage(RGY_LOG_ERROR, _T("Failed to load cut list: %s\n"), m_cut.loadError().c_str());
             return err;
         }
         m_ccRewriter.reset();
         m_pidCutState.clear();
         if (!m_removeNonTargetService) {
-            AddMessage(RGY_LOG_ERROR, _T("--preserve-other-services は --cut-list と併用できない\n"));
+            AddMessage(RGY_LOG_ERROR, _T("--preserve-other-services cannot be used with --cut-list.\n"));
             return RGY_ERR_INVALID_PARAM;
         }
         if (prms.removeTypeDExplicitlyDisabled) {
-            AddMessage(RGY_LOG_WARN, _T("--cut-list 指定時は type-d packet の削除が強制される (--no-remove-typed は無視)\n"));
+            AddMessage(RGY_LOG_WARN, _T("--cut-list always removes type-D packets (--no-remove-typed is ignored).\n"));
         }
         m_removeTypeD = true;
     }
@@ -1518,7 +1518,7 @@ RGY_ERR TSReplace::finalizeHeldADTSPES(uint16_t pid, TSRPidCutState& state, bool
     std::vector<uint8_t> pesHeader;
     std::vector<uint8_t> esPayload;
     if (!splitPESHeaderAndPayload(state.heldPESData, pesHeader, esPayload)) {
-        AddMessage(RGY_LOG_WARN, _T("PID 0x%04x: 音声 PES header を解析できないため、この PES を破棄する\n"), pid);
+        AddMessage(RGY_LOG_WARN, _T("PID 0x%04x: Failed to parse the audio PES header; dropping this PES.\n"), pid);
         state.heldPackets.clear();
         state.heldPESData.clear();
         state.heldNeedsFrontTrim = false;
@@ -1581,7 +1581,7 @@ RGY_ERR TSReplace::finalizeHeldADTSPES(uint16_t pid, TSRPidCutState& state, bool
     if (modified) {
         std::vector<std::vector<uint8_t>> packets;
         if (!tsrPacketizePES(pid, pesHeader, esPayload, packets)) {
-            AddMessage(RGY_LOG_WARN, _T("PID 0x%04x: 音声 PES を再パケット化できないため、この PES を破棄する\n"), pid);
+            AddMessage(RGY_LOG_WARN, _T("PID 0x%04x: Failed to repacketize the audio PES; dropping this PES.\n"), pid);
             state.adtsChain.reset();
             state.resyncNeeded = true;
         } else {
@@ -2148,7 +2148,7 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
         m_vidFirstKeyPTS, (m_vidFirstKeyPTS - m_vidFirstPacketPTS) * 1000.0 / (double)TS_TIMEBASE, (m_vidFirstKeyPTS - m_vidFirstFramePTS) * 1000.0 / (double)TS_TIMEBASE);
     if (cutMode()) {
         if (const auto err = m_cut.resolve(m_vidFirstFramePTS); err != RGY_ERR_NONE) {
-            AddMessage(RGY_LOG_ERROR, _T("cut list の範囲解決に失敗: %s\n"), m_cut.loadError().c_str());
+            AddMessage(RGY_LOG_ERROR, _T("Failed to resolve cut list ranges: %s\n"), m_cut.loadError().c_str());
             return err;
         }
         AddMessage(RGY_LOG_INFO, _T("Loaded %d cut ranges, total cut: %.3f sec\n"),
@@ -2164,7 +2164,7 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
         const auto startRel = diffTimestampTsAMinusB(m_outputStartTimestamp, m_vidFirstFramePTS);
         for (const auto& range : m_cut.ranges()) {
             if (range.end <= startRel) {
-                AddMessage(RGY_LOG_WARN, _T("cut 区間 [%lld, %lld) が出力開始点 (%lld) より前で終了している (--replace-delay と二重指定の可能性)\n"),
+                AddMessage(RGY_LOG_WARN, _T("Cut range [%lld, %lld) ends before the output start point (%lld), possibly overlapping with --replace-delay.\n"),
                     (long long)range.start, (long long)range.end, (long long)startRel);
             }
         }
@@ -2478,7 +2478,7 @@ RGY_ERR TSReplace::restruct() {
                                 || (service->aud1.stream.type == RGYTSStreamType::ADTS_TRANSPORT
                                     && service->pidPcr == service->aud1.stream.pid))) {
                             AddMessage(RGY_LOG_WARN,
-                                _T("PCR が音声 PID 0x%04x に同居しているため ADTS フレーム境界そろえを行わない\n"),
+                                _T("PCR shares audio PID 0x%04x; ADTS frame boundary alignment is disabled.\n"),
                                 service->pidPcr);
                             warnedADTSAudioPCR = true;
                         }
@@ -2579,7 +2579,7 @@ RGY_ERR TSReplace::restruct() {
                                         auto *packet = tspkt->packet.data();
                                         if (!tsPacketRewritePESTimestamps(packet, tspkt->datasize(),
                                             mapToOutput(ret.pts), mapToOutput(ret.dts))) {
-                                            AddMessage(RGY_LOG_WARN, _T("PID 0x%04x: PES header の timestamp を書き換えられなかったため、この PES を破棄する\n"),
+                                            AddMessage(RGY_LOG_WARN, _T("PID 0x%04x: Failed to rewrite timestamps in the PES header; dropping this PES.\n"),
                                                 tspkt->header.PID);
                                             keepPES = false;
                                         }
