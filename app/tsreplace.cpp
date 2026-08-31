@@ -1015,13 +1015,11 @@ TSReplace::TSReplace() :
     m_vidPIDReplace(0x0100),
     m_pcrPIDReplace(0),
     m_vidDTSOutMax(TIMESTAMP_INVALID_VALUE),
-    m_vidPTS(TIMESTAMP_INVALID_VALUE),
-    m_vidDTS(TIMESTAMP_INVALID_VALUE),
+    m_vidDTSOut(TIMESTAMP_INVALID_VALUE),
     m_vidFirstFramePTS(TIMESTAMP_INVALID_VALUE),
-    m_vidFirstFrameDTS(TIMESTAMP_INVALID_VALUE),
     m_vidFirstKeyPTS(TIMESTAMP_INVALID_VALUE),
     m_startPoint(TSRReplaceStartPoint::KeyframPts),
-    m_vidFirstTimestamp(TIMESTAMP_INVALID_VALUE),
+    m_vidFirstTimestampOut(TIMESTAMP_INVALID_VALUE),
     m_vidFirstPacketPTS(TIMESTAMP_INVALID_VALUE),
     m_lastPat(),
     m_lastPmt(),
@@ -1047,11 +1045,11 @@ TSReplace::TSReplace() :
     m_encQueueOut(),
     m_replaceDelay(0),
     m_replaceFirstPTS(TIMESTAMP_INVALID_VALUE),
-    m_outputStartTimestamp(TIMESTAMP_INVALID_VALUE),
+    m_startTimestampSrc(TIMESTAMP_INVALID_VALUE),
     m_endAtReplaceEOF(false),
     m_eofCutDelayMs(100),
-    m_outputEndTimestamp(TIMESTAMP_INVALID_VALUE),
-    m_lastReplaceVidPTS(TIMESTAMP_INVALID_VALUE) {
+    m_endTimestampOut(TIMESTAMP_INVALID_VALUE),
+    m_lastReplaceVidPTSOut(TIMESTAMP_INVALID_VALUE) {
 
 }
 TSReplace::~TSReplace() {
@@ -1141,7 +1139,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_fileTS = prms.input;
     m_fileOut = prms.output;
     m_startPoint = prms.startpoint;
-    m_outputStartTimestamp = TIMESTAMP_INVALID_VALUE;
+    m_startTimestampSrc = TIMESTAMP_INVALID_VALUE;
     m_replaceDelay = prms.replaceDelay;
     m_replaceFirstPTS = prms.replaceFirstPTS;
     m_addAud = prms.addAud;
@@ -1171,8 +1169,8 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     // 置換映像EOF終了関連
     m_endAtReplaceEOF    = prms.endAtReplaceEOF;
     m_eofCutDelayMs      = prms.eofCutDelayMs;
-    m_outputEndTimestamp = TIMESTAMP_INVALID_VALUE;
-    m_lastReplaceVidPTS  = TIMESTAMP_INVALID_VALUE;
+    m_endTimestampOut      = TIMESTAMP_INVALID_VALUE;
+    m_lastReplaceVidPTSOut = TIMESTAMP_INVALID_VALUE;
 
     AddMessage(RGY_LOG_INFO, _T("Output  file: \"%s\".\n"), prms.output.c_str());
     AddMessage(RGY_LOG_INFO, _T("Input   file: \"%s\".\n"), prms.input.c_str());
@@ -1621,6 +1619,9 @@ int64_t TSReplace::srcRel(int64_t ts33) const {
     return diffTimestampTsAMinusB(ts33, m_vidFirstFramePTS);
 }
 
+// source時間軸のtimestampを出力時間軸に変換する。
+// srcRel() 経由で m_vidFirstFramePTS に依存するため、cutMode() では
+// initDemuxer() の m_cut.resolve(m_vidFirstFramePTS) 完了後にのみ呼べる。
 int64_t TSReplace::mapToOutput(int64_t ts33) const {
     if (ts33 == TIMESTAMP_INVALID_VALUE || !cutMode()) {
         return ts33;
@@ -1895,11 +1896,11 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const bool addAud = m_addAud && !replaceToMPEG2 && !has_aud;
     const bool addHeader = m_addHeaders && isKey && !has_header;
     // 置換映像のtimecodeはカット済みの出力時間軸なので、mapToOutput()を適用すると二重にカットされる。
-    const auto pts = av_rescale_q(avpkt->pts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
-    const auto dts = av_rescale_q(avpkt->dts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestamp;
+    const auto pts = av_rescale_q(avpkt->pts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestampOut;
+    const auto dts = av_rescale_q(avpkt->dts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestampOut;
 
     // 最後に出力した置換映像のPTSを記録 (EOF時の終了しきい値計算用)
-    m_lastReplaceVidPTS = pts;
+    m_lastReplaceVidPTSOut = pts;
 
     int add_aud_len = (addAud) ? ((replaceToHEVC) ? 7 : 6) : 0;
     const  uint8_t *header = nullptr;
@@ -1977,24 +1978,24 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
 }
 
 int64_t TSReplace::getOrigPtsOffset() {
-    if (m_vidDTS < m_vidDTSOutMax) {
-        if (m_vidDTSOutMax - m_vidDTS > WRAP_AROUND_CHECK_VALUE) {
+    if (m_vidDTSOut < m_vidDTSOutMax) {
+        if (m_vidDTSOutMax - m_vidDTSOut > WRAP_AROUND_CHECK_VALUE) {
             AddMessage(RGY_LOG_INFO, _T("PTS/DTS wrap!\n"));
             m_ptswrapOffset += WRAP_AROUND_VALUE;
-            m_vidDTSOutMax = m_vidDTS;
+            m_vidDTSOutMax = m_vidDTSOut;
         }
     } else {
-        if (m_vidDTS - m_vidDTSOutMax < WRAP_AROUND_CHECK_VALUE) {
-            m_vidDTSOutMax = m_vidDTS;
+        if (m_vidDTSOut - m_vidDTSOutMax < WRAP_AROUND_CHECK_VALUE) {
+            m_vidDTSOutMax = m_vidDTSOut;
         }
     }
     // dtsベースで差分を計算するが、起点は最初のPTSとする
-    auto offset = m_vidDTSOutMax + m_ptswrapOffset - m_vidFirstTimestamp;
+    auto offset = m_vidDTSOutMax + m_ptswrapOffset - m_vidFirstTimestampOut;
     return offset;
 }
 
 RGY_ERR TSReplace::writeReplacedVideo() {
-    if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
+    if (m_vidFirstTimestampOut == TIMESTAMP_INVALID_VALUE) {
         return RGY_ERR_NONE;
     }
     const auto dtsOrigOffset = getOrigPtsOffset();
@@ -2004,11 +2005,11 @@ RGY_ERR TSReplace::writeReplacedVideo() {
             // 置換映像のEOF到達時に終了しきい値を設定
             if (err == RGY_ERR_MORE_DATA
                 && m_endAtReplaceEOF
-                && m_outputEndTimestamp == TIMESTAMP_INVALID_VALUE
-                && m_lastReplaceVidPTS != TIMESTAMP_INVALID_VALUE) {
-                m_outputEndTimestamp = m_lastReplaceVidPTS + (int64_t)m_eofCutDelayMs * (TS_TIMEBASE / 1000); // 90kHz単位;
-                AddMessage(RGY_LOG_INFO, _T("Replace EOF PTS: %11lld\n"), (long long)m_lastReplaceVidPTS);
-                AddMessage(RGY_LOG_DEBUG, _T("Set output end timestamp: %11lld (+%d ms).\n"), (long long)m_outputEndTimestamp, m_eofCutDelayMs);
+                && m_endTimestampOut == TIMESTAMP_INVALID_VALUE
+                && m_lastReplaceVidPTSOut != TIMESTAMP_INVALID_VALUE) {
+                m_endTimestampOut = m_lastReplaceVidPTSOut + (int64_t)m_eofCutDelayMs * (TS_TIMEBASE / 1000); // 90kHz単位;
+                AddMessage(RGY_LOG_INFO, _T("Replace EOF PTS: %11lld\n"), (long long)m_lastReplaceVidPTSOut);
+                AddMessage(RGY_LOG_DEBUG, _T("Set output end timestamp: %11lld (+%d ms).\n"), (long long)m_endTimestampOut, m_eofCutDelayMs);
             }
             return err;
         }
@@ -2023,11 +2024,11 @@ RGY_ERR TSReplace::writeReplacedVideo() {
             // getFrontPktAndPop()側でもEOF到達を検出しうるので、同様に終了しきい値を設定
             if (err2 == RGY_ERR_MORE_DATA
                 && m_endAtReplaceEOF
-                && m_outputEndTimestamp == TIMESTAMP_INVALID_VALUE
-                && m_lastReplaceVidPTS != TIMESTAMP_INVALID_VALUE) {
-                m_outputEndTimestamp = m_lastReplaceVidPTS + (int64_t)m_eofCutDelayMs * (TS_TIMEBASE / 1000); // 90kHz単位
-                AddMessage(RGY_LOG_INFO, _T("Replace EOF PTS: %11lld\n"), (long long)m_lastReplaceVidPTS);
-                AddMessage(RGY_LOG_DEBUG, _T("Set output end timestamp: %11lld (+%d ms).\n"), (long long)m_outputEndTimestamp, m_eofCutDelayMs);
+                && m_endTimestampOut == TIMESTAMP_INVALID_VALUE
+                && m_lastReplaceVidPTSOut != TIMESTAMP_INVALID_VALUE) {
+                m_endTimestampOut = m_lastReplaceVidPTSOut + (int64_t)m_eofCutDelayMs * (TS_TIMEBASE / 1000); // 90kHz単位
+                AddMessage(RGY_LOG_INFO, _T("Replace EOF PTS: %11lld\n"), (long long)m_lastReplaceVidPTSOut);
+                AddMessage(RGY_LOG_DEBUG, _T("Set output end timestamp: %11lld (+%d ms).\n"), (long long)m_endTimestampOut, m_eofCutDelayMs);
             }
             return err2;
         }
@@ -2132,7 +2133,7 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     if (m_vidFirstFramePTS  < 0) m_vidFirstFramePTS  += WRAP_AROUND_VALUE;
     if (m_vidFirstKeyPTS    < 0) m_vidFirstKeyPTS    += WRAP_AROUND_VALUE;
     // 出力開始点の計算 (最初に時刻を取得できたパケット + replace-delay)
-    m_outputStartTimestamp = m_vidFirstPacketPTS + m_replaceDelay;
+    m_startTimestampSrc = m_vidFirstPacketPTS + m_replaceDelay;
     // 読み込み側に解析の終了を通知
     m_preAnalysisFin = true;
     originalTS.reset();
@@ -2161,7 +2162,7 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
                 (long long)range.start, (long long)range.end,
                 formatTimestampOffset(start).c_str(), formatTimestampOffset(end).c_str());
         }
-        const auto startRel = diffTimestampTsAMinusB(m_outputStartTimestamp, m_vidFirstFramePTS);
+        const auto startRel = diffTimestampTsAMinusB(m_startTimestampSrc, m_vidFirstFramePTS);
         for (const auto& range : m_cut.ranges()) {
             if (range.end <= startRel) {
                 AddMessage(RGY_LOG_WARN, _T("Cut range [%lld, %lld) ends before the output start point (%lld), possibly overlapping with --replace-delay.\n"),
@@ -2173,7 +2174,7 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
         (long long)getReplaceVideoOriginPTS(),
         (m_replaceFirstPTS != TIMESTAMP_INVALID_VALUE) ? _T("first-pts") : _T("start-point"));
     if (m_replaceDelay > 0) {
-        AddMessage(RGY_LOG_INFO, _T("  Output start PTS: %11lld (delay %lld [%+7.1f ms])\n"), (long long)m_outputStartTimestamp, (long long)m_replaceDelay, m_replaceDelay * 1000.0 / (double)TS_TIMEBASE);
+        AddMessage(RGY_LOG_INFO, _T("  Output start PTS: %11lld (delay %lld [%+7.1f ms])\n"), (long long)m_startTimestampSrc, (long long)m_replaceDelay, m_replaceDelay * 1000.0 / (double)TS_TIMEBASE);
     }
     if (getStartPointPTS() == TIMESTAMP_INVALID_VALUE) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to get first timestamp.\n"));
@@ -2181,7 +2182,7 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     }
 
     pat = nullptr;
-    m_vidFirstTimestamp = TIMESTAMP_INVALID_VALUE;
+    m_vidFirstTimestampOut = TIMESTAMP_INVALID_VALUE;
     m_demuxer->resetPCR();
     m_demuxer->resetPSICache();
     return RGY_ERR_NONE;
@@ -2362,7 +2363,7 @@ RGY_ERR TSReplace::restruct() {
     uniqueRGYTSPacket patPacket(nullptr, RGYTSPacketDeleter(nullptr));
 
     // 出力状態の初期化
-    auto outputState = (m_replaceDelay > 0 && m_outputStartTimestamp != TIMESTAMP_INVALID_VALUE) ? TSROutputState::Cutting : TSROutputState::Output;
+    auto outputState = (m_replaceDelay > 0 && m_startTimestampSrc != TIMESTAMP_INVALID_VALUE) ? TSROutputState::Cutting : TSROutputState::Output;
     bool replaceDelayOutputAudioStarted = false; // m_replaceDelay > 0の場合に、音声出力を開始したかどうかのフラグ
     bool warnedADTSAudioPCR = false;
 
@@ -2410,11 +2411,11 @@ RGY_ERR TSReplace::restruct() {
             // 映像EOF+マージンを超えたら出力を打ち切る (PTS wrap を考慮)
             if (outputState == TSROutputState::Output
                 && m_endAtReplaceEOF
-                && m_outputEndTimestamp != TIMESTAMP_INVALID_VALUE
+                && m_endTimestampOut != TIMESTAMP_INVALID_VALUE
                 && curTimestamp != TIMESTAMP_INVALID_VALUE
-                && diffTimestampTsAMinusB(mapToOutput(curTimestamp), m_outputEndTimestamp) > 0) {
+                && diffTimestampTsAMinusB(mapToOutput(curTimestamp), m_endTimestampOut) > 0) {
                 AddMessage(RGY_LOG_DEBUG, _T("Stop output at timestamp %11lld (>= EOF+margin %11lld).\n"),
-                    (long long)mapToOutput(curTimestamp), (long long)m_outputEndTimestamp);
+                    (long long)mapToOutput(curTimestamp), (long long)m_endTimestampOut);
                 if (auto err = flushHeldADTSPES(); err != RGY_ERR_NONE) {
                     return err;
                 }
@@ -2423,7 +2424,7 @@ RGY_ERR TSReplace::restruct() {
 
             if (outputState == TSROutputState::Cutting) {
                 if (curTimestamp == TIMESTAMP_INVALID_VALUE  // まだ開始点が決められないので、解析のみ行い出力はしない
-                    || curTimestamp < m_outputStartTimestamp) { // まだ開始点に達していないので、解析のみ行い出力はしない
+                    || curTimestamp < m_startTimestampSrc) { // まだ開始点に達していないので、解析のみ行い出力はしない
                     if (ret.type == RGYTSPacketType::PAT) {
                         pat = m_demuxer->pat();
                         patPacket = std::move(tspkt);
@@ -2459,7 +2460,7 @@ RGY_ERR TSReplace::restruct() {
                     writeReplacedPMT(*pmtResult);
                     pmtResult.reset();
                     if (m_startPoint == TSRReplaceStartPoint::FirstPacket) {
-                        m_vidDTSOutMax = m_vidFirstTimestamp = mapToOutput(getReplaceVideoOriginPTS());
+                        m_vidDTSOutMax = m_vidFirstTimestampOut = mapToOutput(getReplaceVideoOriginPTS());
                         if (auto err2 = writeReplacedVideo(); (err2 != RGY_ERR_NONE && err2 != RGY_ERR_MORE_DATA)) {
                             return err2;
                         }
@@ -2527,20 +2528,14 @@ RGY_ERR TSReplace::restruct() {
                             writeReplacedPCR(mapToOutput(ret.pcr));
                         }
                         if (tspkt->header.PayloadStartFlag) {
-                            m_vidPTS = mapToOutput(ret.pts);
-                            m_vidDTS = mapToOutput(ret.dts);
+                            m_vidDTSOut = mapToOutput(ret.dts);
                             if (m_vidFirstFramePTS == TIMESTAMP_INVALID_VALUE) {
                                 m_vidFirstFramePTS = ret.pts;
                                 //AddMessage(RGY_LOG_INFO, _T("First Video PTS:     %11lld\n"), m_vidFirstFramePTS);
                             }
-                            if (m_vidFirstFrameDTS == TIMESTAMP_INVALID_VALUE) {
-                                m_vidFirstFrameDTS = ret.dts;
-                                //AddMessage(RGY_LOG_DEBUG, _T("First Video DTS:     %11lld\n"), m_vidFirstFrameDTS);
-                            }
-                            if (m_vidFirstTimestamp == TIMESTAMP_INVALID_VALUE) {
-                                const auto startPoint = getStartPointPTS();
-                                if (startPoint <= ret.pts) {
-                                    m_vidDTSOutMax = m_vidFirstTimestamp = mapToOutput(getReplaceVideoOriginPTS());
+                            if (m_vidFirstTimestampOut == TIMESTAMP_INVALID_VALUE) {
+                                if (getStartPointPTS() <= ret.pts) { // どちらもsource時間軸
+                                    m_vidDTSOutMax = m_vidFirstTimestampOut = mapToOutput(getReplaceVideoOriginPTS());
                                 }
                             }
                         }

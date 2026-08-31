@@ -335,14 +335,18 @@ protected:
     bool m_preAnalysisFin; // 事前解析の終了
     uint16_t m_vidPIDReplace;   // 出力tsの動画のPID上書き用
     uint16_t m_pcrPIDReplace;   // 出力tsのPCRのPID上書き用
-    int64_t m_vidDTSOutMax;     // 出力時間軸の動画フレームDTS最大値(出力制御用)
-    int64_t m_vidPTS;           // 直前の動画フレームのPTS
-    int64_t m_vidDTS;           // 直前の動画フレームのDTS (出力時間軸)
+    // [timestampメンバの時間軸の命名規則]
+    // CMカット時は「元TSの時間軸(source)」と「カット後の時間軸(出力)」の2つが存在し、
+    // 変換は mapToOutput() による source → 出力 の一方向のみ (--cut-list なしなら両者は一致する)。
+    // 出力時間軸で保持するメンバは名前を "Out" で終える。
+    // "Out" が付かないtimestampメンバは全てsource時間軸 (紛らわしい箇所には "Src" を付す)。
+    // 比較・演算は必ず同じ時間軸同士で行うこと。
+    int64_t m_vidDTSOutMax;     // 動画フレームDTS最大値(出力制御用)
+    int64_t m_vidDTSOut;        // 直前の動画フレームのDTS
     int64_t m_vidFirstFramePTS; // 最初の動画フレームのPTS
-    int64_t m_vidFirstFrameDTS; // 最初の動画フレームのDTS
     int64_t m_vidFirstKeyPTS;   // 最初の動画キーフレームのPTS
     TSRReplaceStartPoint m_startPoint; // 起点モード
-    int64_t m_vidFirstTimestamp;       // 起点のtimestamp (出力時間軸)
+    int64_t m_vidFirstTimestampOut;    // 起点のtimestamp
     int64_t m_vidFirstPacketPTS;       // 最初のパケットのPTS
     std::vector<uint8_t> m_lastPat; // 直前の出力PATデータ
     std::vector<uint8_t> m_lastPmt; // 直前の出力PMTデータ
@@ -372,13 +376,13 @@ protected:
     // 置換遅延関連
     int64_t m_replaceDelay;          // --replace-delay で指定された遅延量(90kHz単位)
     int64_t m_replaceFirstPTS;       // 置換映像の先頭フレームに対応する元TSの絶対PTS
-    int64_t m_outputStartTimestamp;  // 出力開始点 = m_firstTimestamp + m_replaceDelay
+    int64_t m_startTimestampSrc;     // 出力開始点 = m_vidFirstPacketPTS + m_replaceDelay
 
     // 置換映像EOF終了関連
     bool    m_endAtReplaceEOF;       // --end-at-replace-eof が有効か
     int     m_eofCutDelayMs;         // EOF からの余裕時間(ms)
-    int64_t m_outputEndTimestamp;    // 出力終了点 (90kHz単位)
-    int64_t m_lastReplaceVidPTS;     // 最後に出力した置換映像のPTS
+    int64_t m_endTimestampOut;       // 出力終了点 (90kHz単位)
+    int64_t m_lastReplaceVidPTSOut;  // 最後に出力した置換映像のPTS
 };
 
 #endif //__TSREPLACE_H__
