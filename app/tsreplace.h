@@ -336,7 +336,7 @@ protected:
     uint16_t m_vidPIDReplace;   // 出力tsの動画のPID上書き用
     uint16_t m_pcrPIDReplace;   // 出力tsのPCRのPID上書き用
     // [timestampメンバの時間軸の命名規則]
-    // CMカット時は「元TSの時間軸(source)」と「カット後の時間軸(出力)」の2つが存在し、
+    // 途中区間カット時は「元TSの時間軸(source)」と「カット後の時間軸(出力)」の2つが存在し、
     // 変換は mapToOutput() による source → 出力 の一方向のみ (--cut-list なしなら両者は一致する)。
     // 出力時間軸で保持するメンバは名前を "Out" で終える。
     // "Out" が付かないtimestampメンバは全てsource時間軸 (紛らわしい箇所には "Src" を付す)。
