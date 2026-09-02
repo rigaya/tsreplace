@@ -34,7 +34,13 @@ RUN apt-get update \
       build-essential \
       openssl \
       libssl-dev \
-    && wget -q https://archive.ubuntu.com/ubuntu/pool/universe/n/nasm/nasm_2.15.05-1_amd64.deb \
+    && NASM_ARCH="$(dpkg --print-architecture)" \
+    && if [ "${NASM_ARCH}" = "arm64" ]; then \
+         NASM_REPO=https://ports.ubuntu.com/ubuntu-ports; \
+       else \
+         NASM_REPO=https://archive.ubuntu.com/ubuntu; \
+       fi \
+    && wget -q "${NASM_REPO}/pool/universe/n/nasm/nasm_2.15.05-1_${NASM_ARCH}.deb" \
       -O /tmp/nasm.deb \
     && dpkg -i /tmp/nasm.deb \
     && rm -f /tmp/nasm.deb \
