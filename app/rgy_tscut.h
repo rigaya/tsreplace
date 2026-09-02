@@ -11,11 +11,18 @@
 
 #include "rgy_err.h"
 #include "rgy_tchar.h"
+#include "rgy_tsutil.h"
 
 struct TSRCutRange {
     int64_t start;
     int64_t end;
 };
+
+// カットリスト中で先頭/末尾トリムを表す sentinel。
+// 33bit PTS の値域外なので、通常の cut 範囲と取り違えることはない。
+//   cut -1 <pts>  先頭トリム: <pts> から出力を開始する (置換映像の先頭フレームの元TS上のPTS)
+//   cut <pts> -1  末尾トリム: <pts> で出力を終了する
+static const int64_t TSR_CUT_TRIM_MARK = -1;
 
 int64_t tsPacketReadPCRBase(const uint8_t *pkt188);
 bool tsPacketWritePCRBase(uint8_t *pkt188, int64_t pcrBase);
@@ -59,6 +66,11 @@ public:
     const std::vector<TSRCutRange>& absoluteRanges() const;
     const std::vector<TSRCutRange>& ranges() const;
     int64_t totalRemoved() const;
+    // 先頭/末尾トリム位置 (元TSの絶対PTS)。未指定なら TIMESTAMP_INVALID_VALUE。
+    // 中間カットと違い timeline は詰めず、出力の開始点/終了点を決めるだけなので
+    // ranges() には含めない。
+    int64_t headTrimPTS() const;
+    int64_t tailTrimPTS() const;
 
     bool isCut(int64_t t) const;
     int64_t removedBefore(int64_t t) const;
@@ -76,6 +88,8 @@ private:
     bool m_loaded;
     bool m_resolved;
     int64_t m_totalRemoved;
+    int64_t m_headTrimPTS;
+    int64_t m_tailTrimPTS;
     mutable size_t m_cachedRange;
 };
 

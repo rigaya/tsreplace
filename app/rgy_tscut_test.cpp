@@ -119,7 +119,10 @@ void expectLoadError(const std::string& name, const std::string& content) {
 }
 
 void testErrors() {
-    expectLoadError("負値", manifest("cut -1 100\n"));
+    expectLoadError("負値", manifest("cut -2 100\n"));
+    expectLoadError("-1 が中間の cut", manifest("cut 100 -1\ncut 200 300\n"));
+    expectLoadError("-1 が中間の cut の start", manifest("cut 100 200\ncut -1 300\n"));
+    expectLoadError("start と end が両方 -1", manifest("cut -1 -1\n"));
     expectLoadError("33bit 範囲外", manifest("cut 100 8589934592\n"));
     expectLoadError("timebase 不正",
         "# tsreplace-cut-v2\ntimebase=1000\n");
@@ -144,6 +147,43 @@ void testErrors() {
         expect(timeline.loadError().find(_T("絶対 PTS")) != tstring::npos
             && timeline.loadError().find(_T("相対値")) != tstring::npos,
             "resolve 失敗理由に絶対 PTS と相対値を含める");
+    }
+}
+
+void testTrim() {
+    {
+        TestFile file("trim_none", manifest("cut 100 130\n"));
+        TSRCutTimeline timeline;
+        expectLoadAndResolve(timeline, file);
+        expect(timeline.headTrimPTS() == TIMESTAMP_INVALID_VALUE
+            && timeline.tailTrimPTS() == TIMESTAMP_INVALID_VALUE,
+            "トリム指定なしでは TIMESTAMP_INVALID_VALUE を返す");
+    }
+    {
+        TestFile file("trim_both", manifest("cut -1 50\ncut 100 130\ncut 400 -1\n"));
+        TSRCutTimeline timeline;
+        expectLoadAndResolve(timeline, file);
+        expect(timeline.headTrimPTS() == 50, "先頭トリムを cut -1 <pts> から取得する");
+        expect(timeline.tailTrimPTS() == 400, "末尾トリムを cut <pts> -1 から取得する");
+        expect(timeline.rangeCount() == 1 && timeline.totalRemoved() == 30,
+            "トリム行は中間カットとして扱わない");
+        expect(timeline.removedBefore(500) == 30, "トリム行は timeline を詰めない");
+    }
+    {
+        TestFile file("trim_head_only", manifest("cut -1 50\n"));
+        TSRCutTimeline timeline;
+        expectLoadAndResolve(timeline, file);
+        expect(timeline.enabled() && timeline.rangeCount() == 0,
+            "先頭トリムのみでも有効になり、中間カットは 0 個");
+        expect(timeline.headTrimPTS() == 50 && timeline.tailTrimPTS() == TIMESTAMP_INVALID_VALUE,
+            "先頭トリムのみを取得する");
+    }
+    {
+        TestFile file("trim_tail_only", manifest("cut 400 -1\n"));
+        TSRCutTimeline timeline;
+        expectLoadAndResolve(timeline, file);
+        expect(timeline.rangeCount() == 0 && timeline.tailTrimPTS() == 400,
+            "末尾トリムのみを取得する");
     }
 }
 
@@ -614,6 +654,7 @@ int main() {
     testMultipleRanges();
     testNormalization();
     testErrors();
+    testTrim();
     testResolve();
     testResolveWrap();
     testTextEncoding();

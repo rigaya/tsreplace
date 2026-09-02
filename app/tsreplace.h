@@ -205,7 +205,6 @@ struct TSRReplaceParams {
     tstring cutList;
     TSRReplaceStartPoint startpoint;
     int64_t replaceDelay;
-    int64_t replaceFirstPTS;
     bool endAtReplaceEOF;
     int eofCutDelayMs;
     tstring encoderPath;
@@ -274,8 +273,12 @@ protected:
     uint8_t getAudValue(const AVPacket *pkt) const;
     std::tuple<RGY_ERR, bool, bool> checkPacket(const AVPacket *pkt);
     int64_t getStartPointPTS() const;
-    int64_t getReplaceVideoOriginPTS() const;
     bool cutMode() const { return m_cut.enabled(); }
+    // カットリストの先頭/末尾トリム。未指定時とcut mode以外では TIMESTAMP_INVALID_VALUE。
+    int64_t headTrimPTS() const { return cutMode() ? m_cut.headTrimPTS() : TIMESTAMP_INVALID_VALUE; }
+    int64_t tailTrimPTS() const { return cutMode() ? m_cut.tailTrimPTS() : TIMESTAMP_INVALID_VALUE; }
+    // 出力開始点まで頭を落とすモードか (--replace-delay または カットリストの先頭トリム)
+    bool trimHead() const { return m_replaceDelay > 0 || headTrimPTS() != TIMESTAMP_INVALID_VALUE; }
     int64_t srcRel(int64_t ts33) const;
     int64_t mapToOutput(int64_t ts33) const;
     bool isCutTimestamp(int64_t ts33) const;
@@ -375,7 +378,7 @@ protected:
 
     // 置換遅延関連
     int64_t m_replaceDelay;          // --replace-delay で指定された遅延量(90kHz単位)
-    int64_t m_replaceFirstPTS;       // 置換映像の先頭フレームに対応する元TSの絶対PTS
+    int64_t m_replaceFirstPTS;       // 置換映像の先頭フレームに対応する元TSの絶対PTS (カットリストの先頭トリムから設定)
     int64_t m_startTimestampSrc;     // 出力開始点 = m_vidFirstPacketPTS + m_replaceDelay
 
     // 置換映像EOF終了関連

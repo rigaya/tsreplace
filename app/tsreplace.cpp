@@ -175,7 +175,6 @@ TSRReplaceParams::TSRReplaceParams() :
     cutList(),
     startpoint(TSRReplaceStartPoint::KeyframPts),
     replaceDelay(0),
-    replaceFirstPTS(TIMESTAMP_INVALID_VALUE),
     endAtReplaceEOF(false),
     eofCutDelayMs(100),
     addAud(true),
@@ -1141,7 +1140,6 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_startPoint = prms.startpoint;
     m_startTimestampSrc = TIMESTAMP_INVALID_VALUE;
     m_replaceDelay = prms.replaceDelay;
-    m_replaceFirstPTS = prms.replaceFirstPTS;
     m_addAud = prms.addAud;
     m_addHeaders = prms.addHeaders;
     m_removeTypeD = prms.removeTypeD;
@@ -1149,6 +1147,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_removeNonTargetService = prms.removeNonTargetService;
     m_copyFileTs = prms.copyFileTs;
 
+    m_replaceFirstPTS = TIMESTAMP_INVALID_VALUE;
     if (!prms.cutList.empty()) {
         if (const auto err = m_cut.load(prms.cutList); err != RGY_ERR_NONE) {
             AddMessage(RGY_LOG_ERROR, _T("Failed to load cut list: %s\n"), m_cut.loadError().c_str());
@@ -1164,6 +1163,24 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
             AddMessage(RGY_LOG_WARN, _T("--cut-list always removes type-D packets (--no-remove-typed is ignored).\n"));
         }
         m_removeTypeD = true;
+        // 先頭トリム (cut -1 <pts>) は出力開始点と置換映像の原点を兼ねる。
+        // --replace-delay / --start-point による従来の推定は不要になるため、併用は認めない。
+        if (m_cut.headTrimPTS() != TIMESTAMP_INVALID_VALUE) {
+            if (m_replaceDelay != 0) {
+                AddMessage(RGY_LOG_ERROR, _T("--replace-delay cannot be used with the head trim (cut -1 <pts>) in the cut list.\n"));
+                return RGY_ERR_INVALID_PARAM;
+            }
+            m_replaceFirstPTS = m_cut.headTrimPTS();
+            // 先頭トリムが起点そのものを与えるので、--start-point による起点推定は使わない。
+            // (firstpacket の「PMT直後に起点確定」動作も無効化する)
+            m_startPoint = TSRReplaceStartPoint::FirstFrame;
+        }
+        // 末尾トリム (cut <pts> -1) は出力終了点を元TS上の絶対PTSで直接指定するので、
+        // 置換映像のEOFから終了点を推定する --end-at-replace-eof とは併用できない。
+        if (m_cut.tailTrimPTS() != TIMESTAMP_INVALID_VALUE && prms.endAtReplaceEOF) {
+            AddMessage(RGY_LOG_ERROR, _T("--end-at-replace-eof cannot be used with the tail trim (cut <pts> -1) in the cut list.\n"));
+            return RGY_ERR_INVALID_PARAM;
+        }
     }
 
     // 置換映像EOF終了関連
@@ -1184,7 +1201,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
         }
         AddMessage(RGY_LOG_INFO, _T("Encoder Args:%s\n"), str.c_str());
     }
-    AddMessage(RGY_LOG_INFO, _T("Start point : %s.\n"), get_cx_desc(list_startpoint, (int)prms.startpoint));
+    AddMessage(RGY_LOG_INFO, _T("Start point : %s.\n"), get_cx_desc(list_startpoint, (int)m_startPoint));
     AddMessage(RGY_LOG_INFO, _T("Replace delay : %lld (90kHz ticks).\n"), (long long)m_replaceDelay);
     if (m_replaceFirstPTS != TIMESTAMP_INVALID_VALUE) {
         AddMessage(RGY_LOG_INFO, _T("Replace first PTS: %lld.\n"), (long long)m_replaceFirstPTS);
@@ -2041,19 +2058,17 @@ RGY_ERR TSReplace::writeReplacedVideo() {
 }
 
 int64_t TSReplace::getStartPointPTS() const {
+    // 先頭トリム(cut -1 <pts>)指定時は、出力開始点も置換映像の起点もカットリストが直接決めるので、
+    // --start-point / --replace-delay による推定は行わない。
+    if (m_replaceFirstPTS != TIMESTAMP_INVALID_VALUE) {
+        return m_replaceFirstPTS;
+    }
     switch (m_startPoint) {
     case TSRReplaceStartPoint::FirstPacket:    return m_vidFirstPacketPTS + m_replaceDelay;
     case TSRReplaceStartPoint::FirstFrame:     return m_vidFirstFramePTS + m_replaceDelay;
     case TSRReplaceStartPoint::KeyframPts:     return m_vidFirstKeyPTS + m_replaceDelay;
     }
     return TIMESTAMP_INVALID_VALUE;
-}
-
-int64_t TSReplace::getReplaceVideoOriginPTS() const {
-    if (m_replaceFirstPTS != TIMESTAMP_INVALID_VALUE) {
-        return m_replaceFirstPTS;
-    }
-    return getStartPointPTS();
 }
 
 RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
@@ -2132,8 +2147,11 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
     if (m_vidFirstPacketPTS < 0) m_vidFirstPacketPTS += WRAP_AROUND_VALUE;
     if (m_vidFirstFramePTS  < 0) m_vidFirstFramePTS  += WRAP_AROUND_VALUE;
     if (m_vidFirstKeyPTS    < 0) m_vidFirstKeyPTS    += WRAP_AROUND_VALUE;
-    // 出力開始点の計算 (最初に時刻を取得できたパケット + replace-delay)
-    m_startTimestampSrc = m_vidFirstPacketPTS + m_replaceDelay;
+    // 出力開始点の計算
+    // 先頭トリム指定時はその絶対PTSをそのまま使う。未指定なら従来通り(最初に時刻を取得できたパケット + replace-delay)。
+    m_startTimestampSrc = (headTrimPTS() != TIMESTAMP_INVALID_VALUE)
+        ? headTrimPTS()
+        : m_vidFirstPacketPTS + m_replaceDelay;
     // 読み込み側に解析の終了を通知
     m_preAnalysisFin = true;
     originalTS.reset();
@@ -2162,18 +2180,28 @@ RGY_ERR TSReplace::initDemuxer(std::vector<uniqueRGYTSPacket>& tsPackets) {
                 (long long)range.start, (long long)range.end,
                 formatTimestampOffset(start).c_str(), formatTimestampOffset(end).c_str());
         }
+        if (headTrimPTS() != TIMESTAMP_INVALID_VALUE) {
+            AddMessage(RGY_LOG_INFO, _T("  head trim %lld (%s)\n"), (long long)headTrimPTS(),
+                formatTimestampOffset(diffTimestampTsAMinusB(headTrimPTS(), m_vidFirstFramePTS)).c_str());
+        }
+        if (tailTrimPTS() != TIMESTAMP_INVALID_VALUE) {
+            AddMessage(RGY_LOG_INFO, _T("  tail trim %lld (%s)\n"), (long long)tailTrimPTS(),
+                formatTimestampOffset(diffTimestampTsAMinusB(tailTrimPTS(), m_vidFirstFramePTS)).c_str());
+        }
         const auto startRel = diffTimestampTsAMinusB(m_startTimestampSrc, m_vidFirstFramePTS);
         for (const auto& range : m_cut.ranges()) {
             if (range.end <= startRel) {
-                AddMessage(RGY_LOG_WARN, _T("Cut range [%lld, %lld) ends before the output start point (%lld), possibly overlapping with --replace-delay.\n"),
+                AddMessage(RGY_LOG_WARN, _T("Cut range [%lld, %lld) ends before the output start point (%lld), possibly overlapping with the output start point.\n"),
                     (long long)range.start, (long long)range.end, (long long)startRel);
             }
         }
     }
     AddMessage(RGY_LOG_INFO, _T("  Replace origin PTS: %11lld (%s)\n"),
-        (long long)getReplaceVideoOriginPTS(),
-        (m_replaceFirstPTS != TIMESTAMP_INVALID_VALUE) ? _T("first-pts") : _T("start-point"));
-    if (m_replaceDelay > 0) {
+        (long long)getStartPointPTS(),
+        (m_replaceFirstPTS != TIMESTAMP_INVALID_VALUE) ? _T("head-trim") : _T("start-point"));
+    if (headTrimPTS() != TIMESTAMP_INVALID_VALUE) {
+        AddMessage(RGY_LOG_INFO, _T("  Output start PTS: %11lld (head-trim)\n"), (long long)m_startTimestampSrc);
+    } else if (m_replaceDelay > 0) {
         AddMessage(RGY_LOG_INFO, _T("  Output start PTS: %11lld (delay %lld [%+7.1f ms])\n"), (long long)m_startTimestampSrc, (long long)m_replaceDelay, m_replaceDelay * 1000.0 / (double)TS_TIMEBASE);
     }
     if (getStartPointPTS() == TIMESTAMP_INVALID_VALUE) {
@@ -2363,7 +2391,7 @@ RGY_ERR TSReplace::restruct() {
     uniqueRGYTSPacket patPacket(nullptr, RGYTSPacketDeleter(nullptr));
 
     // 出力状態の初期化
-    auto outputState = (m_replaceDelay > 0 && m_startTimestampSrc != TIMESTAMP_INVALID_VALUE) ? TSROutputState::Cutting : TSROutputState::Output;
+    auto outputState = (trimHead() && m_startTimestampSrc != TIMESTAMP_INVALID_VALUE) ? TSROutputState::Cutting : TSROutputState::Output;
     bool replaceDelayOutputAudioStarted = false; // m_replaceDelay > 0の場合に、音声出力を開始したかどうかのフラグ
     bool warnedADTSAudioPCR = false;
 
@@ -2406,6 +2434,25 @@ RGY_ERR TSReplace::restruct() {
                 curTimestamp = ret.pts;
             } else if (const auto pcrCur = m_demuxer->pcr(); pcrCur != TIMESTAMP_INVALID_VALUE) {
                 curTimestamp = pcrCur;
+            }
+
+            // 末尾トリム: 元TS上の絶対PTSで直接判定する (置換映像のEOFに依存しない)
+            if (outputState == TSROutputState::Output
+                && tailTrimPTS() != TIMESTAMP_INVALID_VALUE
+                && curTimestamp != TIMESTAMP_INVALID_VALUE
+                && diffTimestampTsAMinusB(curTimestamp, tailTrimPTS()) >= 0) {
+                AddMessage(RGY_LOG_DEBUG, _T("Stop output at timestamp %11lld (>= tail trim %11lld).\n"),
+                    (long long)curTimestamp, (long long)tailTrimPTS());
+                // curTimestampは音声など映像以外のPESでも更新されるため、この時点では置換映像の
+                // 書き出しが末尾トリム位置まで届いていないことがある。末尾まで書き切ってから終了する。
+                m_vidDTSOutMax = mapToOutput(tailTrimPTS());
+                if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
+                    return err;
+                }
+                if (auto err = flushHeldADTSPES(); err != RGY_ERR_NONE) {
+                    return err;
+                }
+                return RGY_ERR_NONE;
             }
 
             // 映像EOF+マージンを超えたら出力を打ち切る (PTS wrap を考慮)
@@ -2460,7 +2507,7 @@ RGY_ERR TSReplace::restruct() {
                     writeReplacedPMT(*pmtResult);
                     pmtResult.reset();
                     if (m_startPoint == TSRReplaceStartPoint::FirstPacket) {
-                        m_vidDTSOutMax = m_vidFirstTimestampOut = mapToOutput(getReplaceVideoOriginPTS());
+                        m_vidDTSOutMax = m_vidFirstTimestampOut = mapToOutput(getStartPointPTS());
                         if (auto err2 = writeReplacedVideo(); (err2 != RGY_ERR_NONE && err2 != RGY_ERR_MORE_DATA)) {
                             return err2;
                         }
@@ -2535,7 +2582,7 @@ RGY_ERR TSReplace::restruct() {
                             }
                             if (m_vidFirstTimestampOut == TIMESTAMP_INVALID_VALUE) {
                                 if (getStartPointPTS() <= ret.pts) { // どちらもsource時間軸
-                                    m_vidDTSOutMax = m_vidFirstTimestampOut = mapToOutput(getReplaceVideoOriginPTS());
+                                    m_vidDTSOutMax = m_vidFirstTimestampOut = mapToOutput(getStartPointPTS());
                                 }
                             }
                         }
@@ -2545,7 +2592,7 @@ RGY_ERR TSReplace::restruct() {
                             // データ放送の削除 -> 出力しない
                         } else {
                             bool outputPkt = true;
-                            if (m_replaceDelay > 0 && ret.stream.type == RGYTSStreamType::ADTS_TRANSPORT) {
+                            if (trimHead() && ret.stream.type == RGYTSStreamType::ADTS_TRANSPORT) {
                                 if (!replaceDelayOutputAudioStarted) {
                                     // まだ出力を開始していない音声
                                     const auto audioSampleThreshold = 1024 * TS_TIMEBASE / 48000;
@@ -2683,7 +2730,6 @@ static void show_help() {
         _T("   --start-point <string>       set start point\n")
         _T("                                 keyframe, firstframe, firstpacket\n")
         _T("   --replace-delay <int>        cut packets until (first timestamp + delay)\n")
-        _T("   --replace-first-pts <int64>  set replace video first frame PTS (33bit)\n")
         _T("   --end-at-replace-eof [<int>] stop output around replace EOF (+margin ms)\n")
         _T("   --cut-list <filename>        set cm cut list file\n")
 
@@ -2850,25 +2896,6 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
         }
         if (prm.replaceDelay < 0) {
             _ftprintf(stderr, _T("Negative value is not allowed for --%s: \"%s\""), option_name, strInput[i]);
-            return 1;
-        }
-        return 0;
-    }
-    if (IS_OPTION("replace-first-pts")) {
-        i++;
-        try {
-            size_t parsedLength = 0;
-            prm.replaceFirstPTS = std::stoll(strInput[i], &parsedLength);
-            if (parsedLength != _tcslen(strInput[i])) {
-                _ftprintf(stderr, _T("Unknown value for --%s: \"%s\""), option_name, strInput[i]);
-                return 1;
-            }
-        } catch (...) {
-            _ftprintf(stderr, _T("Unknown value for --%s: \"%s\""), option_name, strInput[i]);
-            return 1;
-        }
-        if (prm.replaceFirstPTS < 0 || prm.replaceFirstPTS >= (int64_t{ 1 } << 33)) {
-            _ftprintf(stderr, _T("Value out of 33bit range for --%s: \"%s\""), option_name, strInput[i]);
             return 1;
         }
         return 0;

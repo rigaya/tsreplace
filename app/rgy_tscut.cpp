@@ -404,6 +404,8 @@ TSRCutTimeline::TSRCutTimeline() :
     m_loaded(false),
     m_resolved(false),
     m_totalRemoved(0),
+    m_headTrimPTS(TIMESTAMP_INVALID_VALUE),
+    m_tailTrimPTS(TIMESTAMP_INVALID_VALUE),
     m_cachedRange(0) {
 }
 
@@ -416,6 +418,8 @@ void TSRCutTimeline::clear() {
     m_loaded = false;
     m_resolved = false;
     m_totalRemoved = 0;
+    m_headTrimPTS = TIMESTAMP_INVALID_VALUE;
+    m_tailTrimPTS = TIMESTAMP_INVALID_VALUE;
     m_cachedRange = 0;
 }
 
@@ -472,8 +476,11 @@ RGY_ERR TSRCutTimeline::load(const tstring& filename) {
                 m_loadError = lineError(lineNumber, _T("cut の start / end が整数ではない"));
                 return RGY_ERR_INVALID_FORMAT;
             }
-            if (range.start < 0 || range.end < 0
-                || range.start >= (int64_t{ 1 } << 33) || range.end >= (int64_t{ 1 } << 33)) {
+            // -1 は先頭/末尾トリムの sentinel。位置が妥当かは全行を読み終えてから判定する。
+            const auto outOfRange = [](const int64_t v) {
+                return (v < 0 && v != TSR_CUT_TRIM_MARK) || v >= (int64_t{ 1 } << 33);
+            };
+            if (outOfRange(range.start) || outOfRange(range.end)) {
                 m_loadError = cutRangeError(lineNumber, _T("cut の start / end が 33bit の範囲外"), range);
                 return RGY_ERR_INVALID_PARAM;
             }
@@ -521,6 +528,34 @@ RGY_ERR TSRCutTimeline::load(const tstring& filename) {
         return RGY_ERR_INVALID_FORMAT;
     }
 
+    // 先頭/末尾トリムを cut 範囲から分離する。
+    // これらは中間カットと違い timeline を詰めないので、m_absoluteRanges には残さない。
+    int64_t headTrimPTS = TIMESTAMP_INVALID_VALUE;
+    int64_t tailTrimPTS = TIMESTAMP_INVALID_VALUE;
+    if (!ranges.empty() && ranges.front().start == TSR_CUT_TRIM_MARK) {
+        if (ranges.front().end == TSR_CUT_TRIM_MARK) {
+            m_loadError = lineError(rangeLines.front(), _T("cut の start と end を同時に -1 にはできない"));
+            return RGY_ERR_INVALID_PARAM;
+        }
+        headTrimPTS = ranges.front().end;
+        ranges.erase(ranges.begin());
+        rangeLines.erase(rangeLines.begin());
+    }
+    if (!ranges.empty() && ranges.back().end == TSR_CUT_TRIM_MARK) {
+        tailTrimPTS = ranges.back().start;
+        ranges.pop_back();
+        rangeLines.pop_back();
+    }
+    for (size_t i = 0; i < ranges.size(); i++) {
+        if (ranges[i].start == TSR_CUT_TRIM_MARK || ranges[i].end == TSR_CUT_TRIM_MARK) {
+            m_loadError = lineError(rangeLines[i],
+                _T("-1 は先頭トリム(最初の cut の start)と末尾トリム(最後の cut の end)にのみ指定できる"));
+            return RGY_ERR_INVALID_PARAM;
+        }
+    }
+
+    m_headTrimPTS = headTrimPTS;
+    m_tailTrimPTS = tailTrimPTS;
     m_absoluteRanges = std::move(ranges);
     m_absoluteRangeLines = std::move(rangeLines);
     m_loaded = true;
@@ -620,6 +655,16 @@ const std::vector<TSRCutRange>& TSRCutTimeline::ranges() const {
 int64_t TSRCutTimeline::totalRemoved() const {
     assert(m_resolved);
     return m_totalRemoved;
+}
+
+int64_t TSRCutTimeline::headTrimPTS() const {
+    assert(m_loaded);
+    return m_headTrimPTS;
+}
+
+int64_t TSRCutTimeline::tailTrimPTS() const {
+    assert(m_loaded);
+    return m_tailTrimPTS;
 }
 
 size_t TSRCutTimeline::findRange(int64_t t) const {
