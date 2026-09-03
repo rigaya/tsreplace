@@ -198,7 +198,6 @@ jobs:
 
   build_linux_packages:
     name: Build Linux packages
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: prepare
     uses: ./.github/workflows/build_packages.yml
     with:

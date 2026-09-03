@@ -3,7 +3,6 @@ name: Build Linux Packages
 on:
   push:
     branches:
-      - master
       - linux
   workflow_call:
     inputs:
