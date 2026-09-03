@@ -5,43 +5,139 @@ on:
     branches:
       - master
       - actions
-    tags:
-      - '*'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && 'prepare-release' || format('build-releases-{0}', github.ref) }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
 
 jobs:
-  get_version_name:
-    name: Get version name
+  prepare:
+    name: Prepare build metadata
     runs-on: ubuntu-latest
     outputs:
-      rev_count: ${{ steps.rev.outputs.rev_count }}
-      version_name: ${{ steps.rev.outputs.version_name }}
+      release_sha: ${{ steps.meta.outputs.release_sha }}
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      version_name: ${{ steps.meta.outputs.version_name }}
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-    - name: Set version name
-      id: rev
-      run: |
-        cd ${{ github.workspace }}
-        REVCOUNT=`git rev-list --count HEAD`
-        echo "rev_count=${REVCOUNT}" >> $GITHUB_OUTPUT
-        if [[ "${{ github.ref }}" =~ "refs/tags/" ]]; then
-          VERSION=$(echo ${{ github.ref }} | sed -e "s#refs/tags/##g")
-        else
-          VERSION=r${REVCOUNT}
-        fi
-        echo "version_name=${VERSION}" >> $GITHUB_OUTPUT
+      - name: Checkout target commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
-  build:
-    name: Upload Release Asset
+      - name: Extract and validate metadata
+        id: meta
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_SHA="$(git rev-parse HEAD)"
+          if [[ "$RELEASE_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "ERROR: checkout SHA $RELEASE_SHA does not match workflow SHA $EXPECTED_SHA."
+            exit 1
+          fi
+
+          VERSION="$(bash scripts/get-version.sh)"
+          if [[ -z "$VERSION" || ! "$VERSION" =~ ^[0-9]+\.[0-9]+([A-Za-z0-9._-]*)?$ ]]; then
+            echo "ERROR: invalid or empty version in app/rgy_version.h: '$VERSION'"
+            exit 1
+          fi
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            TAG="$VERSION"
+            VERSION_NAME="$VERSION"
+
+            set +e
+            TAG_CHECK="$(git ls-remote --exit-code --tags origin "refs/tags/$TAG" 2>&1)"
+            TAG_STATUS=$?
+            set -e
+            if (( TAG_STATUS == 0 )); then
+              TAG_MARKER="github-actions-run:$GITHUB_RUN_ID"
+              set +e
+              TAG_REF_RESPONSE="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" 2>&1)"
+              TAG_REF_STATUS=$?
+              set -e
+              if (( TAG_REF_STATUS != 0 )); then
+                echo "ERROR: failed to inspect existing tag $TAG: $TAG_REF_RESPONSE"
+                exit 1
+              fi
+              if [[ "$(jq -r '.object.type' <<< "$TAG_REF_RESPONSE")" != "tag" ]]; then
+                echo "ERROR: version $VERSION has already been released as tag $TAG."
+                echo "Update the version definition and commit it before preparing a release."
+                exit 1
+              fi
+              TAG_OBJECT_SHA="$(jq -r '.object.sha' <<< "$TAG_REF_RESPONSE")"
+              TAG_OBJECT_RESPONSE="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA")"
+              TAG_TARGET_SHA="$(jq -r '.object.sha' <<< "$TAG_OBJECT_RESPONSE")"
+              TAG_MESSAGE="$(jq -r '.message // ""' <<< "$TAG_OBJECT_RESPONSE")"
+              if [[ "$TAG_TARGET_SHA" != "$RELEASE_SHA" ]] || ! grep -Fqx "$TAG_MARKER" <<< "$TAG_MESSAGE"; then
+                echo "ERROR: version $VERSION has already been released as tag $TAG."
+                echo "Update the version definition and commit it before preparing a release."
+                exit 1
+              fi
+              TAG_REUSABLE=true
+            elif (( TAG_STATUS == 2 )); then
+              TAG_REUSABLE=false
+            else
+              echo "ERROR: failed to check whether tag $TAG exists: $TAG_CHECK"
+              exit 1
+            fi
+
+            set +e
+            RELEASE_CHECK="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>&1)"
+            RELEASE_STATUS=$?
+            set -e
+            if (( RELEASE_STATUS == 0 )); then
+              RELEASE_BODY="$(jq -r '.body // ""' <<< "$RELEASE_CHECK")"
+              if [[ "${TAG_REUSABLE:-false}" != true \
+                || "$(jq -r '.tag_name' <<< "$RELEASE_CHECK")" != "$TAG" \
+                || "$(jq -r '.draft' <<< "$RELEASE_CHECK")" != true ]] \
+                || ! grep -Fq "<!-- github-actions-run:$GITHUB_RUN_ID -->" <<< "$RELEASE_BODY"; then
+                echo "ERROR: release $TAG already exists."
+                exit 1
+              fi
+            elif ! grep -q 'HTTP 404' <<< "$RELEASE_CHECK"; then
+              echo "ERROR: failed to check whether release $TAG exists: $RELEASE_CHECK"
+              exit 1
+            fi
+          else
+            TAG=""
+            VERSION_NAME="r$(git rev-list --count HEAD)"
+          fi
+
+          {
+            echo "release_sha=$RELEASE_SHA"
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "version_name=$VERSION_NAME"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Release build target"
+            echo
+            echo "- SHA: \`$RELEASE_SHA\`"
+            echo "- Version: \`$VERSION\`"
+            if [[ -n "$TAG" ]]; then
+              echo "- Tag: \`$TAG\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build_windows:
+    name: Build Windows (${{ matrix.platform }})
     runs-on: windows-2022
-    needs: get_version_name
-
+    needs: prepare
     defaults:
       run:
         shell: cmd
-
     strategy:
       fail-fast: false
       matrix:
@@ -50,11 +146,11 @@ jobs:
             platform: Win32
           - arch: x64
             platform: x64
-    
     steps:
-      - name: Checkout
+      - name: Checkout target commit
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
           submodules: true
           fetch-depth: 0
 
@@ -72,40 +168,193 @@ jobs:
         run: |
           msbuild tsreplace.sln /t:build /p:configuration=Release /p:Platform=${{ matrix.arch }} -maxcpucount
 
-      - name: Create Archieve
-        id: archieve
+      - name: Create archive
         run: |
           mkdir tsreplace_Release
           copy _build\${{ matrix.platform }}\Release\tsreplace*.exe tsreplace_Release
           copy _build\${{ matrix.platform }}\Release\*.dll tsreplace_Release
-          7z a -mx9 tsreplace_${{ needs.get_version_name.outputs.version_name }}_${{ matrix.platform }}.7z .\tsreplace_Release\*
+          7z a -mx9 tsreplace_${{ needs.prepare.outputs.version_name }}_${{ matrix.platform }}.7z .\tsreplace_Release\*
 
       - name: Check dll
         run: |
           "tsreplace_Release\tsreplace.exe" --check-avcodec-dll
 
-      - name: Check Version
-        if: startsWith(github.ref, 'refs/tags/')
-        id: check_ver
+      - name: Check version
+        if: github.event_name == 'workflow_dispatch'
         run: |
-          powershell "$ver = (Get-ItemProperty .\tsreplace_Release\tsreplace*.exe).VersionInfo.FileVersion; if ($ver -eq '${{ needs.get_version_name.outputs.version_name }}') { exit 0; } exit 1;"
+          powershell "$ver = (Get-ItemProperty .\tsreplace_Release\tsreplace*.exe).VersionInfo.FileVersion; if ($ver -eq '${{ needs.prepare.outputs.version }}') { exit 0; } exit 1;"
 
-      - name: Calc hash
-        id: calc_hash
+      - name: Calculate hash
         run: |
-          7z h -scrc* tsreplace_${{ needs.get_version_name.outputs.version_name }}_${{ matrix.platform }}.7z
-
-      - name: Upload Release Asset
-        id: upload-release-asset 
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          files: tsreplace_${{ needs.get_version_name.outputs.version_name }}_${{ matrix.platform }}.7z
+          7z h -scrc* tsreplace_${{ needs.prepare.outputs.version_name }}_${{ matrix.platform }}.7z
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tsreplace_release_${{ needs.get_version_name.outputs.version_name }}_${{ matrix.platform }}
-          path: tsreplace_${{ needs.get_version_name.outputs.version_name }}_${{ matrix.platform }}.7z
+          name: tsreplace_release_${{ needs.prepare.outputs.version_name }}_${{ matrix.platform }}
+          path: tsreplace_${{ needs.prepare.outputs.version_name }}_${{ matrix.platform }}.7z
+          if-no-files-found: error
+          retention-days: 30
+
+  build_linux_packages:
+    name: Build Linux packages
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: prepare
+    uses: ./.github/workflows/build_packages.yml
+    with:
+      release_sha: ${{ needs.prepare.outputs.release_sha }}
+      version_name: ${{ needs.prepare.outputs.version }}
+    secrets: inherit
+
+  release:
+    name: Create draft release
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && needs.prepare.result == 'success' && needs.build_windows.result == 'success' && needs.build_linux_packages.result == 'success' }}
+    needs:
+      - prepare
+      - build_windows
+      - build_linux_packages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Validate release artifacts
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' ASSETS < <(find release-assets -type f -print0)
+          if (( ${#ASSETS[@]} != 4 )); then
+            echo "ERROR: expected 4 release assets, found ${#ASSETS[@]}."
+            exit 1
+          fi
+
+          declare -A BASENAMES=()
+          for ASSET in "${ASSETS[@]}"; do
+            if [[ ! -s "$ASSET" ]]; then
+              echo "ERROR: release asset is empty: $ASSET"
+              exit 1
+            fi
+            BASENAME="$(basename "$ASSET")"
+            if [[ -n "${BASENAMES[$BASENAME]+x}" ]]; then
+              echo "ERROR: duplicate release asset filename: $BASENAME"
+              exit 1
+            fi
+            BASENAMES[$BASENAME]=1
+          done
+
+          ARCHIVE_COUNT="$(find release-assets -type f -name '*.7z' | wc -l)"
+          PACKAGE_COUNT="$(find release-assets -type f -name '*.deb' | wc -l)"
+          if (( ARCHIVE_COUNT != 2 || PACKAGE_COUNT != 2 )); then
+            echo "ERROR: expected 2 Windows archives and 2 Debian packages."
+            exit 1
+          fi
+
+          for REQUIRED in \
+            "tsreplace_${VERSION}_Win32.7z" \
+            "tsreplace_${VERSION}_x64.7z"; do
+            if [[ -z "${BASENAMES[$REQUIRED]+x}" ]]; then
+              echo "ERROR: required release asset is missing: $REQUIRED"
+              exit 1
+            fi
+          done
+
+          find release-assets -type f -printf '%f\n' | sort
+
+      - name: Create or resume draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "ERROR: repository secret RELEASE_PAT is not configured."
+            exit 1
+          fi
+
+          get_api() {
+            set +e
+            API_RESPONSE="$(gh api "$1" 2>&1)"
+            API_STATUS=$?
+            set -e
+          }
+
+          TAG_MARKER="github-actions-run:$GITHUB_RUN_ID"
+          get_api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG"
+          if (( API_STATUS == 0 )); then
+            if [[ "$(jq -r '.object.type' <<< "$API_RESPONSE")" != "tag" ]]; then
+              echo "ERROR: tag $TAG is not an annotated tag created by this workflow run."
+              exit 1
+            fi
+            TAG_OBJECT_SHA="$(jq -r '.object.sha' <<< "$API_RESPONSE")"
+            TAG_OBJECT_RESPONSE="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA")"
+            TAG_MESSAGE="$(jq -r '.message // ""' <<< "$TAG_OBJECT_RESPONSE")"
+            if ! grep -Fq "$TAG_MARKER" <<< "$TAG_MESSAGE"; then
+              echo "ERROR: tag $TAG was not created by this workflow run."
+              exit 1
+            fi
+            TAG_TARGET_SHA="$(jq -r '.object.sha' <<< "$TAG_OBJECT_RESPONSE")"
+            if [[ "$TAG_TARGET_SHA" != "$RELEASE_SHA" ]]; then
+              echo "ERROR: tag $TAG points to $TAG_TARGET_SHA, expected $RELEASE_SHA."
+              exit 1
+            fi
+          elif grep -q 'HTTP 404' <<< "$API_RESPONSE"; then
+            TAG_OBJECT_SHA="$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
+              -f "tag=$TAG" \
+              -f "message=$TAG_MARKER" \
+              -f "object=$RELEASE_SHA" \
+              -f "type=commit" \
+              --jq '.sha')"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$TAG" -f "sha=$TAG_OBJECT_SHA" >/dev/null
+          else
+            echo "ERROR: failed to inspect tag $TAG: $API_RESPONSE"
+            exit 1
+          fi
+
+          RELEASE_MARKER="<!-- github-actions-run:$GITHUB_RUN_ID -->"
+          get_api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG"
+          if (( API_STATUS == 0 )); then
+            if [[ "$(jq -r '.tag_name' <<< "$API_RESPONSE")" != "$TAG" ]]; then
+              echo "ERROR: release does not target tag $TAG."
+              exit 1
+            fi
+            RELEASE_DRAFT="$(jq -r '.draft' <<< "$API_RESPONSE")"
+            if [[ "$RELEASE_DRAFT" != "true" ]]; then
+              echo "ERROR: release $TAG is already published; refusing to modify it."
+              exit 1
+            fi
+            RELEASE_BODY="$(jq -r '.body // ""' <<< "$API_RESPONSE")"
+            if ! grep -Fq "$RELEASE_MARKER" <<< "$RELEASE_BODY"; then
+              echo "ERROR: draft release $TAG was not created by this workflow run."
+              exit 1
+            fi
+          elif grep -q 'HTTP 404' <<< "$API_RESPONSE"; then
+            RELEASE_NOTES="$RELEASE_MARKER"$'\n\nRelease version '"$VERSION".
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --draft \
+              --title "$TAG" \
+              --notes "$RELEASE_NOTES"
+          else
+            echo "ERROR: failed to inspect release $TAG: $API_RESPONSE"
+            exit 1
+          fi
+
+          gh release upload "$TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+          RELEASE_URL="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq '.url')"
+          {
+            echo "## Draft Release"
+            echo
+            echo "[$TAG]($RELEASE_URL)"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -5,11 +5,17 @@ on:
     branches:
       - master
       - linux
-    tags:
-      - '*'
+  workflow_call:
+    inputs:
+      release_sha:
+        required: true
+        type: string
+      version_name:
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
   packages: read
 
 jobs:
@@ -35,7 +41,7 @@ jobs:
       BASE_IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/tsreplace-build
       FFMPEG_PREFIX: /opt/build_scripts/ffmpeg_dll/tsreplace/${{ matrix.ffmpeg_arch }}/build
 
-    name: Upload Release Asset
+    name: Build package (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     steps:
       - name: Prepare
@@ -48,9 +54,10 @@ jobs:
           echo "nproc=${NPROC}" >> $GITHUB_OUTPUT
           echo "output_dir=${OUTPUT_DIR}" >> $GITHUB_OUTPUT
 
-      - name: Checkout code
+      - name: Checkout target commit
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           submodules: true
           fetch-depth: 0
 
@@ -64,11 +71,13 @@ jobs:
       - name: Pull base image
         run: docker pull ${{ steps.prep.outputs.base_image }}
 
-      - name: Create Output Dir
+      - name: Create output directory
         run: mkdir -p ${{ steps.prep.outputs.output_dir }}
 
-      - name: Build Exec
+      - name: Build package
         id: build_exec
+        env:
+          RELEASE_VERSION: ${{ inputs.version_name }}
         run: |
           docker run -dit --rm \
             -v ${{ github.workspace }}:/work \
@@ -78,31 +87,28 @@ jobs:
             --name build_pkg ${{ steps.prep.outputs.base_image }}
           docker exec build_pkg bash -lc "PKG_CONFIG_PATH=${{ env.FFMPEG_PREFIX }}/lib/pkgconfig meson setup ./build . --buildtype=release -Db_lto=true -Dlibav_static=true -Dstatic_runtime=true"
           docker exec build_pkg bash -lc "meson compile -C ./build -j${{ steps.prep.outputs.nproc }}"
+          VERSION_OUTPUT="$(docker exec build_pkg ./build/tsreplace --version)"
+          echo "$VERSION_OUTPUT"
+          if [[ -n "$RELEASE_VERSION" && "$VERSION_OUTPUT" != *" $RELEASE_VERSION "* ]]; then
+            echo "ERROR: built version does not match release version $RELEASE_VERSION"
+            exit 1
+          fi
           docker exec build_pkg bash -lc "ldd ./build/tsreplace"
-          docker exec build_pkg bash -lc "./build/tsreplace --version"
           docker exec build_pkg bash -lc "cp ./build/tsreplace ./tsreplace"
-          docker exec build_pkg bash -lc "./build_${{ env.PKG_TYPE }}.sh"
-          docker exec build_pkg bash -lc "cp -v ./*.${{ env.PKG_TYPE }} /output/"
+          docker exec build_pkg bash -lc "./build_${PKG_TYPE}.sh"
+          docker exec build_pkg bash -lc "cp -v ./*.${PKG_TYPE} /output/"
           PKGFILE=$(ls ${{ steps.prep.outputs.output_dir }}/*.${{ env.PKG_TYPE }})
-          echo "${PKGFILE}"
-          echo "pkgfile=${PKGFILE}" >> $GITHUB_OUTPUT
+          echo "$PKGFILE"
+          echo "pkgfile=$PKGFILE" >> $GITHUB_OUTPUT
 
-      - name: Calc hash
-        id: calc_hash
+      - name: Calculate hash
         run: |
           7z h -scrc* ${{ steps.build_exec.outputs.pkgfile }}
-
-      - name: Upload Release Asset
-        id: upload-release-asset
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          files: ${{ steps.build_exec.outputs.pkgfile }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: tsreplace_${{ matrix.dockerimg }}_${{ matrix.pkgtype }}_${{ matrix.platform }}
           path: ${{ steps.build_exec.outputs.pkgfile }}
+          if-no-files-found: error
+          retention-days: 30

@@ -31,9 +31,9 @@
 
 #include "rgy_rev.h"
 
-#define VER_FILEVERSION             0,0,19,0
-#define VER_STR_FILEVERSION          "0.19"
-#define VER_STR_FILEVERSION_TCHAR _T("0.19")
+#define VER_FILEVERSION             0,0,20,0
+#define VER_STR_FILEVERSION          "0.20"
+#define VER_STR_FILEVERSION_TCHAR _T("0.20")
 
 #ifdef _M_IX86
 #define BUILD_ARCH_STR _T("x86")
