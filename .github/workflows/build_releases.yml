@@ -232,6 +232,7 @@ jobs:
           fi
 
           declare -A BASENAMES=()
+          mkdir release-assets-flat
           for ASSET in "${ASSETS[@]}"; do
             if [[ ! -s "$ASSET" ]]; then
               echo "ERROR: release asset is empty: $ASSET"
@@ -243,6 +244,7 @@ jobs:
               exit 1
             fi
             BASENAMES[$BASENAME]=1
+            cp "$ASSET" "release-assets-flat/$BASENAME"
           done
 
           ARCHIVE_COUNT="$(find release-assets -type f -name '*.7z' | wc -l)"
@@ -347,7 +349,7 @@ jobs:
             exit 1
           fi
 
-          gh release upload "$TAG" release-assets/* \
+          gh release upload "$TAG" release-assets-flat/* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
 
