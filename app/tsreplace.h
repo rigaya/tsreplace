@@ -371,6 +371,11 @@ protected:
 
     decltype(parse_nal_unit_hevc_c) *m_parseNalHevc; // HEVC用のnal unit分解関数へのポインタ
 
+    // AV1 (Carriage of AV1 in MPEG-2 TS) 対応
+    std::vector<uint8_t> m_av1TsObuBuffer; // AV1パケットを tsOBU (start code + emulation prevention) へ変換するバッファ
+    std::vector<uint8_t> m_av1HeaderTsObu; // av1C から抽出した sequence header OBU の tsOBU 表現 (ヘッダ挿入用)
+    bool m_av1HeaderBuilt;                 // m_av1HeaderTsObu を構築済みか
+
     std::unique_ptr<RGYPipeProcess> m_encoder; // エンコーダプロセス
     std::thread m_encThreadOut; // エンコーダからの標準出力を読み取り m_videoReplace に転送するスレッド
     std::thread m_encThreadErr; // エンコーダからの標準エラー出力を読み取るスレッド

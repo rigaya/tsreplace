@@ -172,6 +172,10 @@ enum class RGYTSStreamType : uint8_t {
     H262_VIDEO       = 0x02,
     H264_VIDEO       = 0x1b,
     H265_VIDEO       = 0x24,
+    // AV1 は "Carriage of AV1 in MPEG-2 TS" (AOM draft) に従い、stream_type 0x06 (private data) で、
+    // registration_descriptor 'AV01' + AV1_video_descriptor (0x80) により識別される。
+    // 同じ 0x06 を使う PES_PRIVATE_DATA (字幕等) とは descriptor で区別する。
+    AV1_VIDEO        = 0x06,
     MPEG2_AUDIO      = 0x04,
     ADTS_TRANSPORT   = 0x0f,
     PES_PRIVATE_DATA = 0x06,
