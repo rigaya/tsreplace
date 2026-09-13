@@ -274,16 +274,24 @@ void RGYTSDemuxer::parsePMT(RGYTSDemuxProgram *program) {
         service.pidList.push_back(streamInfo);
         if (pos + 5 + esInfoLength <= tableLen) {
             int componentTag = 0xff;
+            bool isAV1 = false;
             for (int i = pos + 5; i + 2 < pos + 5 + esInfoLength; i += 2 + table[i + 1]) {
                 // stream_identifier_descriptor
                 if (table[i] == 0x52) {
                     componentTag = table[i + 2];
                     break;
                 }
+                // registration_descriptor (0x05) の format_identifier が 'AV01' なら AV1 video
+                if (table[i] == 0x05 && i + 6 <= pos + 5 + esInfoLength
+                    && table[i + 2] == 'A' && table[i + 3] == 'V'
+                    && table[i + 4] == '0' && table[i + 5] == '1') {
+                    isAV1 = true;
+                }
             }
             if (streamType == RGYTSStreamType::H262_VIDEO ||
                 streamType == RGYTSStreamType::H264_VIDEO ||
-                streamType == RGYTSStreamType::H265_VIDEO) {
+                streamType == RGYTSStreamType::H265_VIDEO ||
+                (isAV1 && streamType == RGYTSStreamType::AV1_VIDEO)) {
                 if ((service.vid.stream.pid == 0 && componentTag == 0xff) || componentTag == 0x00 || componentTag == 0x81) {
                     service.vid.stream.pid = esPid;
                     service.vid.stream.type = streamType;

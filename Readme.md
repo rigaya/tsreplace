@@ -307,7 +307,10 @@ timestampを保持できるコンテナ入りの映像を想定しており、ra
   - 188byte tsのみ対応しています。
   - 解像度変更のあるtsについては動作は検証しません。
 - 置き換え映像ファイルの制限
-  - MPEG-2/H.264/HEVCの置き換えに対応します。
+  - MPEG-2/H.264/HEVC/AV1の置き換えに対応します。
+  - AV1 は [Carriage of AV1 in MPEG-2 TS](https://aomediacodec.github.io/av1-mpeg2-ts/) (AOM working draft) に従って
+    mux します (stream_type 0x06 + registration 'AV01' + AV1_video_descriptor、PES stream_id 0xBD、start code 形式の tsOBU)。
+    仕様がドラフト段階のため、再生側の対応状況によっては正常に再生できない場合があります。
   - インタレ保持はMPEG-2/H.264のみ対応します。
   - 置き換えファイルはtimestampを保持できるコンテナ入りの映像を想定しています。
     ESでの動作は検証しません。

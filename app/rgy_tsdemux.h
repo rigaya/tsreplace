@@ -40,6 +40,7 @@ int findsync(const uint8_t *data, const int data_size, int *unit_size);
 
 enum class RGYTSDescriptor : uint8_t {
     ConditionalAccess          = 0x09,
+    Registration               = 0x05, // format_identifier を伴う registration_descriptor
     NetworkName                = 0x40,
     ServiceList                = 0x41,
     Stuffing                   = 0x42,
@@ -73,6 +74,7 @@ enum class RGYTSDescriptor : uint8_t {
     ComponentGroup             = 0xD9,
     Series                     = 0xD5,
     ContentAvailability        = 0xDE,
+    AV1Video                   = 0x80, // AV1_video_descriptor ("Carriage of AV1 in MPEG-2 TS")
 };
 
 enum class RGYTSVideoDecCtrlDesc {
