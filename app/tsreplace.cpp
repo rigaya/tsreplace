@@ -38,6 +38,7 @@
 #include "rgy_bitstream.h"
 #include "rgy_filesystem.h"
 #include "tsreplace.h"
+#include "rgy_ts_preroll.h"
 
 static const TCHAR *serviceNum[] = {_T(""), _T("1st"), _T("2nd"), _T("3rd"), _T("4th"), _T("5th"), _T("6th"), _T("7th"), _T("8th"), _T("9th")};
 
@@ -179,6 +180,7 @@ TSRReplaceParams::TSRReplaceParams() :
     eofCutDelayMs(100),
     addAud(true),
     addHeaders(true),
+    startupPrerollMs(TSR_STARTUP_PREROLL_DEFAULT_MS),
     removeTypeD(false),
     removeTypeDExplicitlyDisabled(false),
     removeNonTargetService(true),
@@ -1002,6 +1004,11 @@ TSReplace::TSReplace() :
     m_threadOutputTS(),
     m_queueOutput(),
     m_bufferOutput(),
+    m_startupOutput(),
+    m_startupPrerollPending(false),
+    m_startupPrerollMs(TSR_STARTUP_PREROLL_DEFAULT_MS),
+    m_startupPmtPID(0),
+    m_startupPcrPID(0),
     m_outputBlockSize(1 * 1024 * 1024),
     m_outputIsPipe(false),
     m_outputError(RGY_ERR_NONE),
@@ -1101,6 +1108,14 @@ RGY_ERR TSReplace::close() {
         m_encoder.reset();
     }
 
+    // 短い、または不完全なストリームでは準備区間の生成前にEOFへ到達することがある。
+    if (!m_startupOutput.empty()) {
+        m_startupPrerollPending = false;
+        RGYTSPacket initial;
+        initial.packet = std::move(m_startupOutput);
+        if (auto err = writePacket(&initial); err != RGY_ERR_NONE && sts == RGY_ERR_NONE) sts = err;
+    }
+
     // 出力スレッドの終了処理: 残りのバッファをフラッシュしてEOFを通知し、書き込み完了を待ってからファイルを閉じる
     if (m_threadOutputTS) {
         AddMessage(RGY_LOG_DEBUG, _T("Flush output buffer.\n"));
@@ -1142,6 +1157,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     m_replaceDelay = prms.replaceDelay;
     m_addAud = prms.addAud;
     m_addHeaders = prms.addHeaders;
+    m_startupPrerollMs = prms.startupPrerollMs;
     m_removeTypeD = prms.removeTypeD;
     m_selectService = prms.selectService;
     m_removeNonTargetService = prms.removeNonTargetService;
@@ -1220,6 +1236,7 @@ RGY_ERR TSReplace::init(std::shared_ptr<RGYLog> log, const TSRReplaceParams& prm
     }
     AddMessage(RGY_LOG_INFO, _T("Preserve Other Services: %s.\n"), m_removeNonTargetService ? _T("off") : _T("on"));
     AddMessage(RGY_LOG_INFO, _T("Copy File Timestamp: %s.\n"), m_copyFileTs ? _T("on") : _T("off"));
+    AddMessage(RGY_LOG_INFO, _T("Preroll: %d ms.\n"), m_startupPrerollMs);
 
     if (_tcscmp(m_fileTS.c_str(), _T("-")) != 0) {
         AddMessage(RGY_LOG_DEBUG, _T("Open input file \"%s\".\n"), m_fileTS.c_str());
@@ -1468,6 +1485,22 @@ RGY_ERR TSReplace::flushOutputBuffer() {
 }
 
 RGY_ERR TSReplace::writePacket(RGYTSPacket *pkt) {
+    if (m_startupPrerollPending) {
+        m_startupOutput.insert(m_startupOutput.end(), pkt->data(), pkt->data() + pkt->datasize());
+        auto preroll = tsrMakeStartupPreroll(m_startupOutput, m_startupPmtPID, m_startupPcrPID, m_startupPrerollMs);
+        // 完全なPSI/PCRがない場合はバッファ量に上限を設け、保持した出力を欠落させずに書き出す。
+        if (preroll.empty() && m_startupOutput.size() < 1024 * 1024) return RGY_ERR_NONE;
+        m_startupPrerollPending = false;
+        RGYTSPacket initial;
+        initial.packet = std::move(m_startupOutput);
+        if (!preroll.empty()) {
+            RGYTSPacket lead;
+            lead.packet = std::move(preroll);
+            AddMessage(RGY_LOG_INFO, _T("Add %d ms startup PSI/PCR preroll with early table delivery.\n"), ((m_startupPrerollMs + 19) / 20) * 20);
+            if (auto err = writePacket(&lead); err != RGY_ERR_NONE) return err;
+        }
+        return writePacket(&initial);
+    }
     if (cutMode()) {
         // CC は出力直前だけ書き換え、呼び出し元で packet を再利用しないため、buffer を直接更新する。
         auto *data = pkt->packet.data();
@@ -2383,6 +2416,12 @@ RGY_ERR TSReplace::restruct() {
         }
     }
 
+    // TVTestではコーデック変更時にデコーダの初期化が非同期で行われる。
+    // PTS/DTSを移動せず、先頭のアクセス単位より前に時計付きのテーブルを送る。
+    m_startupPrerollPending = m_startupPrerollMs > 0;
+    m_startupPmtPID = m_demuxer->selectServiceID()->pmt_pid;
+    m_startupPcrPID = m_pcrPIDReplace ? m_pcrPIDReplace : m_demuxer->service()->pidPcr;
+
     const RGYTS_PAT *pat = nullptr;
     const RGYService *service = nullptr;
     int64_t m_pcr = TIMESTAMP_INVALID_VALUE;
@@ -2735,6 +2774,8 @@ static void show_help() {
 
         _T("   --(no-)add-aud               auto insert aud unit\n")
         _T("   --(no-)add-headers           auto insert headers\n")
+        _T("   --startup-preroll <int>      MPEG-2/H.264/HEVC startup lead-in in ms (default 0)\n")
+        _T("                                 0 disables; 1-60000 rounded up to 20 ms\n")
         _T("   --(no-)remove-typed          remove type-d packets\n")
         _T("\n")
         _T("   --replace-format <string>    set replace file format\n")
@@ -2932,6 +2973,24 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR **strInput, int& i, con
     }
     if (IS_OPTION("no-add-aud")) {
         prm.addAud = false;
+        return 0;
+    }
+    if (IS_OPTION("startup-preroll")) {
+        if (i + 1 >= argc || strInput[i + 1] == nullptr) {
+            _ftprintf(stderr, _T("Missing value for --%s\n"), option_name);
+            return 1;
+        }
+        i++;
+        try {
+            size_t consumed = 0;
+            prm.startupPrerollMs = std::stoi(strInput[i], &consumed);
+            if (consumed != _tcslen(strInput[i]) || prm.startupPrerollMs < 0 || prm.startupPrerollMs > 60000) {
+                throw std::invalid_argument("Invalid startup preroll");
+            }
+        } catch (...) {
+            _ftprintf(stderr, _T("Invalid value for --%s: \"%s\" (expected 0-60000 ms)\n"), option_name, strInput[i]);
+            return 1;
+        }
         return 0;
     }
     if (IS_OPTION("add-headers")) {

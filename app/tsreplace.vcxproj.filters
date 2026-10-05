@@ -158,6 +158,9 @@
     <ClInclude Include="rgy_simd.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="rgy_ts_preroll.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="tsreplace.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>

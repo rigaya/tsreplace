@@ -211,6 +211,7 @@ struct TSRReplaceParams {
     std::vector<tstring> encoderArgs;
     bool addAud;
     bool addHeaders;
+    int startupPrerollMs;
     bool removeTypeD;
     bool removeTypeDExplicitlyDisabled;
     bool removeNonTargetService;
@@ -327,6 +328,11 @@ protected:
     std::unique_ptr<std::thread> m_threadOutputTS; // ファイル出力用の書き込みスレッド
     std::unique_ptr<RGYQueueBuffer> m_queueOutput; // ファイル出力用の書き込みキュー
     std::vector<uint8_t> m_bufferOutput; // 出力TSをブロック単位にまとめるバッファ
+    std::vector<uint8_t> m_startupOutput; // PSI/PCRが揃うまでの先頭出力(最大1MiB)
+    bool m_startupPrerollPending;
+    int m_startupPrerollMs;
+    uint16_t m_startupPmtPID;
+    uint16_t m_startupPcrPID;
     size_t m_outputBlockSize; // ファイル出力をまとめる単位
     bool m_outputIsPipe; // 出力先が標準出力かどうか
     std::atomic<RGY_ERR> m_outputError; // 出力スレッドで発生したエラー
