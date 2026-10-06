@@ -208,6 +208,7 @@ protected:
     RGYTSBuffer m_readBuf;
     RGYTSPacketContainer m_packetContainer;
     int m_packetSize;
+    bool m_synced;
 };
 
 #endif //__RGY_TS_DEMUX_H__

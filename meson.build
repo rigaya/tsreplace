@@ -256,6 +256,22 @@ tsutil_test = executable('rgy_tsutil_test',
 
 test('rgy_tsutil', tsutil_test)
 
+tsdemux_test = executable('rgy_tsdemux_test',
+  files(
+    'app/rgy_tsdemux.cpp',
+    'app/rgy_tsdemux_test.cpp',
+    'app/rgy_tsstruct.cpp',
+    'app/rgy_tsutil.cpp',
+    'app/rgy_util.cpp',
+    'app/rgy_codepage.cpp',
+  ),
+  cpp_args: common_cpp_args,
+  include_directories: common_include_dirs,
+  link_args: static_runtime_link_args,
+)
+
+test('rgy_tsdemux', tsdemux_test)
+
 summary({
   'FFmpeg static deps': libav_static,
   'Static runtime': static_runtime,
