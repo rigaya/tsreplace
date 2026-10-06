@@ -1656,9 +1656,9 @@ RGY_ERR TSReplace::finalizeHeldADTSPES(uint16_t pid, TSRPidCutState& state, bool
     return err;
 }
 
-RGY_ERR TSReplace::flushHeldADTSPES() {
+RGY_ERR TSReplace::flushHeldADTSPES(bool truncateTail) {
     for (auto& [pid, state] : m_pidCutState) {
-        if (auto err = finalizeHeldADTSPES(pid, state, false); err != RGY_ERR_NONE) {
+        if (auto err = finalizeHeldADTSPES(pid, state, truncateTail); err != RGY_ERR_NONE) {
             return err;
         }
     }
@@ -1948,6 +1948,12 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     // 置換映像のtimecodeはカット済みの出力時間軸なので、mapToOutput()を適用すると二重にカットされる。
     const auto pts = av_rescale_q(avpkt->pts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestampOut;
     const auto dts = av_rescale_q(avpkt->dts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestampOut;
+
+    // DTSで書き出しを進めても、末尾トリム以降の表示フレームは出力しない。
+    if (tailTrimPTS() != TIMESTAMP_INVALID_VALUE
+        && diffTimestampTsAMinusB(pts, mapToOutput(tailTrimPTS())) >= 0) {
+        return RGY_ERR_NONE;
+    }
 
     // 最後に出力した置換映像のPTSを記録 (EOF時の終了しきい値計算用)
     m_lastReplaceVidPTSOut = pts;
@@ -2433,6 +2439,8 @@ RGY_ERR TSReplace::restruct() {
     auto outputState = (trimHead() && m_startTimestampSrc != TIMESTAMP_INVALID_VALUE) ? TSROutputState::Cutting : TSROutputState::Output;
     bool replaceDelayOutputAudioStarted = false; // m_replaceDelay > 0の場合に、音声出力を開始したかどうかのフラグ
     bool warnedADTSAudioPCR = false;
+    bool tailTrimReached = false;
+    std::vector<uint16_t> tailAudioPIDs;
 
     //本解析
     for (;;) {
@@ -2440,7 +2448,7 @@ RGY_ERR TSReplace::restruct() {
             auto err = readTS(tsPackets);
             if (err != RGY_ERR_NONE) {
                 if (err == RGY_ERR_MORE_DATA) {
-                    if (auto flushErr = flushHeldADTSPES(); flushErr != RGY_ERR_NONE) {
+                    if (auto flushErr = flushHeldADTSPES(tailTrimPTS() != TIMESTAMP_INVALID_VALUE); flushErr != RGY_ERR_NONE) {
                         return flushErr;
                     }
                 }
@@ -2449,7 +2457,13 @@ RGY_ERR TSReplace::restruct() {
         }
 
         for (auto& tspkt : tsPackets) {
-            if (outputState == TSROutputState::Output && pat) {
+            // 多重化順序による遅れを考慮し、各音声PIDの境界PESまで読み進める。
+            // PMTにだけ存在する音声PIDやPTSのない音声は、入力EOFまで待つ。
+            if (tailTrimReached && std::all_of(tailAudioPIDs.begin(), tailAudioPIDs.end(),
+                [this](uint16_t pid) { return m_pidCutState[pid].tailTrimReached; })) {
+                return RGY_ERR_NONE;
+            }
+            if (!tailTrimReached && outputState == TSROutputState::Output && pat) {
                 if (tspkt->header.PID == 0x00) { //PAT
                     if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
                         return err;
@@ -2475,23 +2489,42 @@ RGY_ERR TSReplace::restruct() {
                 curTimestamp = pcrCur;
             }
 
-            // 末尾トリム: 元TS上の絶対PTSで直接判定する (置換映像のEOFに依存しない)
-            if (outputState == TSROutputState::Output
+            // 末尾トリム位置で映像を確定しても、後方の音声PESはまだ読み終えていない。
+            if (!tailTrimReached && outputState == TSROutputState::Output
                 && tailTrimPTS() != TIMESTAMP_INVALID_VALUE
                 && curTimestamp != TIMESTAMP_INVALID_VALUE
                 && diffTimestampTsAMinusB(curTimestamp, tailTrimPTS()) >= 0) {
-                AddMessage(RGY_LOG_DEBUG, _T("Stop output at timestamp %11lld (>= tail trim %11lld).\n"),
-                    (long long)curTimestamp, (long long)tailTrimPTS());
-                // curTimestampは音声など映像以外のPESでも更新されるため、この時点では置換映像の
-                // 書き出しが末尾トリム位置まで届いていないことがある。末尾まで書き切ってから終了する。
+                AddMessage(RGY_LOG_DEBUG, _T("Reached tail trim %11lld; draining audio PES.\n"),
+                    (long long)tailTrimPTS());
+                tailTrimReached = true;
+                if (const auto targetService = m_demuxer->service(); targetService != nullptr) {
+                    for (const auto pid : { targetService->aud0.stream.pid, targetService->aud1.stream.pid }) {
+                        if (pid > 0) tailAudioPIDs.push_back((uint16_t)pid);
+                    }
+                }
                 m_vidDTSOutMax = mapToOutput(tailTrimPTS());
                 if (auto err = writeReplacedVideo(); (err != RGY_ERR_NONE && err != RGY_ERR_MORE_DATA)) {
                     return err;
                 }
-                if (auto err = flushHeldADTSPES(); err != RGY_ERR_NONE) {
-                    return err;
+            }
+            if (tailTrimReached) {
+                // 音声以外はこれ以上出力せず、映像の出力時計も進めない。
+                const auto pid = tspkt->header.PID;
+                if (std::find(tailAudioPIDs.begin(), tailAudioPIDs.end(), pid) == tailAudioPIDs.end()
+                    || m_pidCutState[pid].tailTrimReached) {
+                    continue;
                 }
-                return RGY_ERR_NONE;
+                if (tspkt->header.PayloadStartFlag && ret.pts != TIMESTAMP_INVALID_VALUE
+                    && diffTimestampTsAMinusB(ret.pts, tailTrimPTS()) >= 0) {
+                    auto& state = m_pidCutState[pid];
+                    // 境界以降のPESは出力せず、直前のPESを完全なAACフレームで閉じる。
+                    if (auto err = finalizeHeldADTSPES(pid, state, true); err != RGY_ERR_NONE) {
+                        return err;
+                    }
+                    state.keepPES = false;
+                    state.tailTrimReached = true;
+                    continue;
+                }
             }
 
             // 映像EOF+マージンを超えたら出力を打ち切る (PTS wrap を考慮)

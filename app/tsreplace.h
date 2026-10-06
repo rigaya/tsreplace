@@ -225,6 +225,7 @@ struct TSRReplaceParams {
 struct TSRPidCutState {
     bool keepPES = false;
     bool seenPUSI = false;
+    bool tailTrimReached = false; // このPIDで末尾トリム以降のPESを確認したか。
     // 音声は次の PUSI で cut 境界が確定するため、1 PES だけ出力を保留する。
     std::vector<std::vector<uint8_t>> heldPackets;
     std::vector<uint8_t> heldPESData;
@@ -261,7 +262,7 @@ protected:
     RGY_ERR flushOutputBuffer();    // 蓄積した出力バッファを書き込みキューへ送る
     RGY_ERR writePacket(RGYTSPacket *pkt);
     RGY_ERR finalizeHeldADTSPES(uint16_t pid, TSRPidCutState& state, bool truncateTail);
-    RGY_ERR flushHeldADTSPES();
+    RGY_ERR flushHeldADTSPES(bool truncateTail = false);
     RGY_ERR writeReplacedPCR(const uint64_t pcr);
     RGY_ERR writeReplacedPAT(const RGYTS_PAT *pat);
     RGY_ERR writeReplacedPMT(const RGYTSDemuxResult& result);
