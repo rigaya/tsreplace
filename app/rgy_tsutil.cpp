@@ -60,7 +60,8 @@ void RGYTSBuffer::addData(void *ptr, const size_t addSize) {
         memmove(buffer.data(), buffer.data() + bufOffset, bufLength);
         bufOffset = 0;
     }
-    memcpy(buffer.data() + bufLength, ptr, addSize);
+    // 未消費データの開始位置を含めて追記し、短い末尾ブロックでも残りを上書きしない。
+    memcpy(buffer.data() + bufOffset + bufLength, ptr, addSize);
     bufLength += addSize;
 }
 

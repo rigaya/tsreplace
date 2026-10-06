@@ -248,6 +248,14 @@ tscut_test = executable('rgy_tscut_test',
 
 test('rgy_tscut', tscut_test)
 
+tsutil_test = executable('rgy_tsutil_test',
+  files('app/rgy_tsutil.cpp', 'app/rgy_tsutil_test.cpp'),
+  include_directories: common_include_dirs,
+  link_args: static_runtime_link_args,
+)
+
+test('rgy_tsutil', tsutil_test)
+
 summary({
   'FFmpeg static deps': libav_static,
   'Static runtime': static_runtime,
