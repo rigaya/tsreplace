@@ -1949,11 +1949,7 @@ RGY_ERR TSReplace::writeReplacedVideo(AVPacket *avpkt) {
     const auto pts = av_rescale_q(avpkt->pts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestampOut;
     const auto dts = av_rescale_q(avpkt->dts - m_videoReplace->getFirstKeyPts(), m_videoReplace->getVidTimebase(), av_make_q(1, TS_TIMEBASE)) + m_vidFirstTimestampOut;
 
-    // DTSで書き出しを進めても、末尾トリム以降の表示フレームは出力しない。
-    if (tailTrimPTS() != TIMESTAMP_INVALID_VALUE
-        && diffTimestampTsAMinusB(pts, mapToOutput(tailTrimPTS())) >= 0) {
-        return RGY_ERR_NONE;
-    }
+    // 末尾境界以降の参照フレームも、境界前のBフレームの復号に必要なためPTSでは除外しない。
 
     // 最後に出力した置換映像のPTSを記録 (EOF時の終了しきい値計算用)
     m_lastReplaceVidPTSOut = pts;

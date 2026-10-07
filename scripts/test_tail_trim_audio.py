@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""末尾トリムで後方の音声PESを欠落させず、AACを完全に復号できることを確認する。"""
+"""末尾トリムで後方の音声PESを保持し、AACとBフレーム入り映像の復号を確認する。"""
 
 import argparse
 import subprocess
@@ -109,6 +109,14 @@ def check_audio(source, output, audio_pids, boundary):
         print(f"PID {audio_pid:#x}: {len(actual)}個の音声PESを確認")
 
 
+def decode_video_hashes(ffmpeg, path):
+    decoded = run(ffmpeg + ["-v", "warning", "-i", str(path), "-map", "0:v:0",
+                            "-fps_mode", "passthrough", "-f", "framemd5", "-"])
+    assert not decoded.stderr, decoded.stderr.decode(errors="replace")
+    return [line.rsplit(",", 1)[-1].strip() for line in decoded.stdout.decode().splitlines()
+            if line and not line.startswith("#")]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tsreplace", required=True, type=Path)
@@ -124,8 +132,14 @@ def main():
                   "-t", "6", "-map", "0:v", "-map", "1:a", "-map", "1:a",
                   "-c:v", "mpeg2video", "-bf", "0", "-c:a", "aac", "-b:a", "128k",
                   "-streamid", "0:256", "-streamid", "1:257", "-streamid", "2:258", str(source)])
-    # 置換映像を境界より長くし、音声待ち中に末尾以降の映像が出ないことも確認する。
+    # 置換映像を境界より長くし、音声待ち中も映像の書き出しが境界付近で止まることを確認する。
     run(ffmpeg + ["-i", str(source), "-an", "-c:v", "libx264", "-preset", "ultrafast", str(replacement)])
+    # 境界前のBフレームが境界以降の参照フレームに依存する並びを固定する。
+    replacement_b = root / "replacement_b.mp4"
+    run(ffmpeg + ["-i", str(source), "-an", "-c:v", "libx264", "-preset", "medium",
+                  "-x264-params", "bframes=3:b-adapt=0:keyint=250:scenecut=0", str(replacement_b)])
+    reference_hashes = {path: decode_video_hashes(ffmpeg, path)
+                        for path in (replacement, replacement_b)}
     original = add_audio_tags(source.read_bytes())
     boundary = read_pes(original, 256)[0][0] + 3 * 90000
     cut = root / "tail.txt"
@@ -143,24 +157,32 @@ def main():
             keep[packet_pid] = read_pes(packet, packet_pid)[0][0] < boundary
         if keep.get(packet_pid, True):
             eof_packets.append(packet)
-    cases = [("file", delayed, [257, 258], False),
-             ("stdin", delayed, [257, 258], True),
-             ("eof", b"".join(eof_packets), [257, 258], False)]
+    cases = [("file", delayed, [257, 258], False, replacement),
+             ("stdin", delayed, [257, 258], True, replacement),
+             ("eof", b"".join(eof_packets), [257, 258], False, replacement),
+             ("b_frames", delayed, [257, 258], False, replacement_b)]
     no_audio = root / "no_audio.ts"
     run(ffmpeg + ["-i", str(source), "-map", "0:v", "-c", "copy", str(no_audio)])
-    cases.append(("no_audio", no_audio.read_bytes(), [], False))
-    for name, data, audio_pids, use_stdin in cases:
+    cases.append(("no_audio", no_audio.read_bytes(), [], False, replacement))
+    for name, data, audio_pids, use_stdin, replace_path in cases:
         input_path, output = root / f"{name}_input.ts", root / f"{name}_output.ts"
         input_path.write_bytes(data)
         command = [str(args.tsreplace.resolve()), "-i", "-" if use_stdin else str(input_path),
-                   "-r", str(replacement), "--replace-format", "mp4", "--cut-list", str(cut), "-o", str(output)]
+                   "-r", str(replace_path), "--replace-format", "mp4", "--cut-list", str(cut), "-o", str(output)]
         with input_path.open("rb") as stream:
             result = run(command, stdin=stream if use_stdin else None)
         (root / f"{name}.log").write_bytes(result.stderr)
         output_data = output.read_bytes()
         check_audio(data, output_data, audio_pids, boundary)
         video = read_pes(output_data, 256)
-        assert video and max(p[0] for p in video) < boundary, "境界以降の映像が出力されています"
+        # 30fps・最大3枚のBフレームに必要な参照映像と、DTSが境界と等しい1枚を許容する。
+        assert video and max(p[0] for p in video) <= boundary + 3 * 3000, "映像が末尾境界を大幅に超えています"
+        if name == "b_frames":
+            assert any(a[0] > b[0] for a, b in zip(video, video[1:])), "Bフレームの並べ替えがありません"
+            assert any(p[0] >= boundary for p in video), "境界以降の参照映像が欠落しています"
+        actual_hashes = decode_video_hashes(ffmpeg, output)
+        assert 90 <= len(actual_hashes) <= 94, "境界前の映像が欠落するか、末尾が延びすぎています"
+        assert actual_hashes == reference_hashes[replace_path][:len(actual_hashes)], "映像の復号結果が元置換映像と一致しません"
         if audio_pids:
             decoded = run(ffmpeg + ["-xerror", "-i", str(output), "-map", "0:a", "-f", "null", "-"])
             assert not decoded.stderr, decoded.stderr.decode(errors="replace")
