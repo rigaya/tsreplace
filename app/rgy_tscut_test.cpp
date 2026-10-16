@@ -486,6 +486,16 @@ void testADTSBoundaryHelpers() {
     const auto frame20 = makeADTSFrame(20, 0x11);
     const auto frame15 = makeADTSFrame(15, 0x22);
 
+    auto pceFrame = makeADTSFrame(384, 0x33);
+    pceFrame[1] = 0xf0; // CRCあり
+    pceFrame[2] &= 0xfe;
+    pceFrame[3] &= 0x3f; // channel_configuration=0(PCEで指定)
+    TSRADTSChainState pceChain;
+    const auto pce = tsrWalkADTSPayload(pceFrame.data(), pceFrame.size(), pceChain);
+    expect(pce.valid && pce.lastCompleteOffset == pceFrame.size()
+        && pceChain.frameRemaining == 0,
+        "PCEでチャンネル構成を指定するADTS frameを処理できる");
+
     TSRADTSChainState chain;
     const auto first = tsrWalkADTSPayload(frame20.data(), 12, chain);
     expect(first.valid && first.lastCompleteOffset == 0 && chain.frameRemaining == 8,

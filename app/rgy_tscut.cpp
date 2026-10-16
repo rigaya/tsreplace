@@ -241,13 +241,20 @@ void TSRADTSChainState::reset() {
 namespace {
 
 bool parseADTSFrameLength(const uint8_t *data, size_t size, size_t& frameLength) {
-    RGYAACHeader header = {};
     if (data == nullptr || size < RGYAACHeader::HEADER_BYTE_SIZE
-        || header.parse(data, size) != 0
-        || header.aac_frame_length < RGYAACHeader::HEADER_BYTE_SIZE) {
+        || data[0] != 0xff || (data[1] & 0xf6) != 0xf0) {
         return false;
     }
-    frameLength = header.aac_frame_length;
+    const auto sampleRateIndex = (data[2] >> 2) & 0x0f;
+    if (sampleRateIndex >= 13) {
+        return false;
+    }
+    frameLength = ((size_t)(data[3] & 0x03) << 11) | ((size_t)data[4] << 3) | (data[5] >> 5);
+    // channel_configuration=0はPCEで構成を指定する有効なADTSなので、フレーム境界の解析では許可する。
+    const auto headerSize = (data[1] & 0x01) ? size_t{ 7 } : size_t{ 9 };
+    if (frameLength < headerSize) {
+        return false;
+    }
     return true;
 }
 
